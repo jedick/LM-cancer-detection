@@ -1,27 +1,25 @@
 *Cancer detection from gut microbiomes using a DNA language model*
 
-## Sample metadata, labeling, and exclusion
+Goal: to implement a cancer prediction and classification pipeline using 16S rRNA gene sequences from fecal samples.
 
-The `metadata/` directory contains CSV files assembled using publicly available BioSample information.
-Each file has a `study_name` column, representing the first three authors and year of publication.
-The `cancer_type` column is one of `breast` or `colorectal`.
+## Sample data, labeling, and exclusion
 
-`sample_id` and `BioSample` are the SRA Run and BioSample accession numbers.
-Other named columns are specific to the studies and are used to assign the sample labels.
-For some datasets, BioSample descriptions are mapped to a new `cohort` column that is restricted to `cancer` or `control`.
+The `data/` directory contains directories for different cancer types (breast and colorectal).
+Within each directory are CSV files named for the source study (last name initials of first three authors and year).
+`Run` and `BioSample` are the SRA Run and BioSample accession numbers.
+Other named columns are specific to the studies.
+For some datasets, sample descriptions are mapped to a `cohort` column that is restricted to `cancer` or `control`.
 
-*For the purposes of model training, sample labels are normalized from the original source labels.*
+*For model training, sample labels are normalized from the original source labels.*
 The `sample_label` column in each CSV file is restricted to these values: `healthy`, `breast_cancer`, `colorectal_cancer`, or `benign`.
-
-The `benign` category contains both adenomas (benign colon tumors) and breast ductal carcinoma in-situ (DCIS).
+The `benign` category contains adenomas and benign colon polyps and breast ductal carcinoma in-situ (DCIS).
 `breast_cancer` includes invasive tumors and `colorectal_cancer` includes carcinoma.
-`healthy` includes the control samples in each study - these may be variously described as healthy, controls, or non-cancerous.
+`healthy` includes the control samples in each study - these may be variously described as healthy or normal controls.
 
-*Samples labeled as `benign` are not used for model training.*
-Additionally, non-fecal samples provided in some studies are excluded from training.
 The `sample_used` column is a Boolean that indicates whether samples are used for training.
+Samples labeled as `benign` and non-fecal samples in some studies are excluded from training.
 
 ## Downloading data
 
-Use `scripts/download_sra_data.py` to download the sequence data from SRA.
-
+Use `scripts/download_sra_data.py` to download the 16S rRNA gene sequence data from SRA.
+The gzipped sequence files are stored under `fasta/` in a separate directory for each study.
