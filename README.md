@@ -21,5 +21,12 @@ Samples labeled as `benign` and non-fecal samples in some studies are excluded f
 
 ## Downloading data
 
+Install script dependencies from the repository root: `pip install -r requirements.txt`.
+
 Use `scripts/download_sra_data.py` to download the 16S rRNA gene sequence data from SRA.
 The gzipped sequence files are stored under `fasta/` in a separate directory for each study.
+
+## Tetranucleotide frequencies
+
+Use `scripts/calculate_tetranucleotide_frequencies.py` to build a CSV of tetranucleotide (4-mer) frequency profiles for model training from the downloaded FASTA files.
+The script only process rows with `sample_used=TRUE` in the CSV files under `data/` and writes one table (`outputs/tetranucleotide_frequencies.csv`) with labels plus 256 feature columns (percentages of 4-mer counts across all sequences in each FASTA file).

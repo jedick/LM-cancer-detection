@@ -1,0 +1,20 @@
+---
+description: SRA sample ID and FASTA conventions; large fasta tree; progress for long scripts
+alwaysApply: true
+---
+
+# SRA data pipeline conventions
+
+## Sample identity and FASTA files
+
+- Treat the **`Run` column** (NCBI SRA accession: `SRR*`, `ERR*`, `DRR*`) as the **sample ID**: one CSV row with a valid `Run` is one sequencing sample.
+- **FASTA filenames** use that accession as the base name: `{Run}.fasta.gz` (for example `SRR5894020.fasta.gz`).
+- **Layout** matches `scripts/download_sra_data.py`: for a data CSV whose filename stem is `<study_name>`, files live under `fasta/<study_name>/` at the repo root (e.g. `fasta/AAM+13/SRR5894020.fasta.gz`). Scripts that read sequences should resolve paths the same way.
+
+## `fasta/` directory and runtime
+
+- In this project, **`fasta` may be a symlink** to a large external directory (e.g. a shared sequence store). A **full pass over every run** can take a **long time** because processing must **read every base** in each **gzip FASTA** (I/O and decompression bound). Do not assume “small repo” timings for batch scripts over all runs.
+
+## Long-running scripts
+
+- Any script that **iterates over many runs or large FASTAs** should expose **visible progress** (e.g. current study, run index / total, optional ETA or per-study summary). Prefer **flushed stdout** or a single updating status line (`\r`) so logs stay usable; print a **newline** before unrelated output so progress lines do not corrupt the terminal.
