@@ -3,11 +3,12 @@
 Download SRA data from NCBI Sequence Read Archive.
 
 This script:
-- Reads all CSV files in metadata/ to find sample_ids matching SRR*, ERR*, or DRR* pattern
-- Uses each metadata filename stem as study_name (e.g., AAM+13.csv -> AAM+13)
+- Reads all CSV files under data/ (recursively, e.g. data/breast/*.csv) to find runs
+  matching SRR*, ERR*, or DRR* pattern
+- Uses each data filename stem as study_name (e.g., AAM+13.csv -> AAM+13)
 - Downloads full gzip files from NCBI SRA URLs
 - Verifies gzip integrity for every downloaded file
-- Saves to data/fasta/<study_name>/<sample_id>.fasta.gz
+- Saves to fasta/<study_name>/<run>.fasta.gz
 - Skips existing files
 """
 
@@ -75,14 +76,14 @@ def verify_gzip_integrity(gzip_path: Path) -> bool:
         return False
 
 
-def process_sample(study_name: str, sample_id: str, output_dir: Path) -> bool:
+def process_sample(study_name: str, run: str, output_dir: Path) -> bool:
     """
     Download and process a single SRA sample.
 
     Returns True if successful, False otherwise.
     """
     # Check if output file already exists
-    output_file = output_dir / f"{sample_id}.fasta.gz"
+    output_file = output_dir / f"{run}.fasta.gz"
     if output_file.exists():
         return True  # Already downloaded
 
@@ -90,7 +91,7 @@ def process_sample(study_name: str, sample_id: str, output_dir: Path) -> bool:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Construct download URL
-    url = f"https://trace.ncbi.nlm.nih.gov/Traces/sra-reads-be/fasta?acc={sample_id}"
+    url = f"https://trace.ncbi.nlm.nih.gov/Traces/sra-reads-be/fasta?acc={run}"
 
     # Download to a temporary file in the final output directory.
     temp_gzip = output_file.with_suffix(".fasta.gz.part")
@@ -111,7 +112,7 @@ def process_sample(study_name: str, sample_id: str, output_dir: Path) -> bool:
         return True
 
     except Exception as e:
-        print(f"    Error processing {sample_id}: {e}")
+        print(f"    Error processing {run}: {e}")
         return False
     finally:
         # Clean up temporary files
@@ -125,7 +126,7 @@ def process_sample(study_name: str, sample_id: str, output_dir: Path) -> bool:
 
 
 def main():
-    """Main function to process all samples from metadata CSV files."""
+    """Main function to process all samples from data CSV files."""
     global interrupted
 
     # Set up signal handler for cleanup
@@ -135,14 +136,14 @@ def main():
     # Paths
     script_dir = Path(__file__).parent
     repo_root = script_dir.parent
-    metadata_dir = repo_root / "metadata"
-    fasta_base_dir = repo_root / "data" / "fasta"
+    data_dir = repo_root / "data"
+    fasta_base_dir = repo_root / "fasta"
 
-    if not metadata_dir.exists():
-        print(f"Error: {metadata_dir} not found")
+    if not data_dir.exists():
+        print(f"Error: {data_dir} not found")
         sys.exit(1)
 
-    # Pattern to match SRR*, ERR*, or DRR* sample_ids
+    # Pattern to match SRR*, ERR*, or DRR* runs
     pattern = re.compile(r"^(SRR|ERR|DRR)\d+$")
 
     # Statistics
@@ -152,33 +153,34 @@ def main():
     downloaded = 0
     failed = 0
 
-    metadata_files = sorted(metadata_dir.glob("*.csv"))
-    if not metadata_files:
-        print(f"Error: no CSV files found in {metadata_dir}")
+    data_files = sorted(data_dir.rglob("*.csv"))
+    if not data_files:
+        print(f"Error: no CSV files found under {data_dir}")
         sys.exit(1)
 
-    print(f"Reading metadata files from {metadata_dir}...")
+    print(f"Reading data files from {data_dir}...")
     try:
-        for csv_path in metadata_files:
+        for csv_path in data_files:
             if interrupted:
                 break
 
             study_name = csv_path.stem
+            csv_label = csv_path.relative_to(data_dir)
 
             with open(csv_path, "r", newline="") as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
 
-            print(f"Found {len(rows)} rows in {csv_path.name} (study {study_name})")
+            print(f"Found {len(rows)} rows in {csv_label} (study {study_name})")
 
             for row in rows:
                 if interrupted:
                     break
 
-                sample_id = row.get("sample_id", "").strip()
+                run = row.get("Run", "").strip()
 
                 # Skip if doesn't match pattern
-                if not pattern.match(sample_id):
+                if not pattern.match(run):
                     skipped_pattern += 1
                     continue
 
@@ -186,14 +188,14 @@ def main():
 
                 # Check if already downloaded
                 output_dir = fasta_base_dir / study_name
-                output_file = output_dir / f"{sample_id}.fasta.gz"
+                output_file = output_dir / f"{run}.fasta.gz"
                 if output_file.exists():
                     skipped_existing += 1
                     continue
 
                 # Process sample
-                print(f"[{total_samples}] Processing {study_name}/{sample_id}...")
-                if process_sample(study_name, sample_id, output_dir):
+                print(f"[{total_samples}] Processing {study_name}/{run}...")
+                if process_sample(study_name, run, output_dir):
                     downloaded += 1
                     print("    \u2713 Downloaded and verified")
                 else:

@@ -1,0 +1,80 @@
+Run,BioSample,LibraryName,SampleName,isolate,sample_label,sample_used
+SRR18003824,SAMN25819261,BM001,BM001,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003823,SAMN25819262,BM002,BM002,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003778,SAMN25819263,BM003,BM003,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003767,SAMN25819264,BM004,BM004,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003756,SAMN25819265,BM005,BM005,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003811,SAMN25819266,BM006,BM006,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003800,SAMN25819267,BM007,BM007,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003789,SAMN25819268,BM008,BM008,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003747,SAMN25819269,BM009,BM009,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003746,SAMN25819270,BM010,BM010,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003822,SAMN25819271,BM011,BM011,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003821,SAMN25819272,BM012,BM012,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003786,SAMN25819273,BM013,BM013,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003785,SAMN25819274,BM014,BM014,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003784,SAMN25819275,BM015,BM015,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003783,SAMN25819276,BM016,BM016,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003782,SAMN25819277,BM017,BM017,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003781,SAMN25819278,BM018,BM018,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003780,SAMN25819279,BM019,BM019,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003779,SAMN25819280,BM020,BM020,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003777,SAMN25819281,BM021,BM021,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003776,SAMN25819282,BM022,BM022,"Breast cancer patients with bone metastasis",breast_cancer,TRUE
+SRR18003775,SAMN25819283,BN001,BN001,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003774,SAMN25819284,BN002,BN002,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003773,SAMN25819285,BN003,BN003,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003772,SAMN25819286,BN004,BN004,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003771,SAMN25819287,BN005,BN005,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003770,SAMN25819288,BN006,BN006,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003769,SAMN25819289,BN007,BN007,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003768,SAMN25819290,BN008,BN008,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003766,SAMN25819291,BN009,BN009,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003765,SAMN25819292,BN010,BN010,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003764,SAMN25819293,BN011,BN011,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003763,SAMN25819294,BN012,BN012,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003762,SAMN25819295,BN013,BN013,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003761,SAMN25819296,BN014,BN014,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003760,SAMN25819297,BN015,BN015,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003759,SAMN25819298,BN016,BN016,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003758,SAMN25819299,BN017,BN017,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003757,SAMN25819300,BN018,BN018,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003754,SAMN25819301,BN019,BN019,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003820,SAMN25819302,BN020,BN020,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003819,SAMN25819303,BN021,BN021,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003818,SAMN25819304,BN022,BN022,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003817,SAMN25819305,BN023,BN023,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003816,SAMN25819306,BN024,BN024,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003815,SAMN25819307,BN025,BN025,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003814,SAMN25819308,BN026,BN026,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003813,SAMN25819309,BN027,BN027,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003812,SAMN25819310,BN028,BN028,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003810,SAMN25819311,BN029,BN029,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003809,SAMN25819312,BN030,BN030,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003808,SAMN25819313,BN031,BN031,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003807,SAMN25819314,BN032,BN032,"Breast cancer patients with no bone metastasis",breast_cancer,TRUE
+SRR18003806,SAMN25819315,NC001,NC001,"Normal control",healthy,TRUE
+SRR18003805,SAMN25819316,NC002,NC002,"Normal control",healthy,TRUE
+SRR18003804,SAMN25819317,NC003,NC003,"Normal control",healthy,TRUE
+SRR18003803,SAMN25819318,NC004,NC004,"Normal control",healthy,TRUE
+SRR18003802,SAMN25819319,NC005,NC005,"Normal control",healthy,TRUE
+SRR18003801,SAMN25819320,NC006,NC006,"Normal control",healthy,TRUE
+SRR18003799,SAMN25819321,NC007,NC007,"Normal control",healthy,TRUE
+SRR18003798,SAMN25819322,NC008,NC008,"Normal control",healthy,TRUE
+SRR18003797,SAMN25819323,NC009,NC009,"Normal control",healthy,TRUE
+SRR18003796,SAMN25819324,NC010,NC010,"Normal control",healthy,TRUE
+SRR18003795,SAMN25819325,NC011,NC011,"Normal control",healthy,TRUE
+SRR18003794,SAMN25819326,NC012,NC012,"Normal control",healthy,TRUE
+SRR18003793,SAMN25819327,NC013,NC013,"Normal control",healthy,TRUE
+SRR18003792,SAMN25819328,NC014,NC014,"Normal control",healthy,TRUE
+SRR18003791,SAMN25819329,NC015,NC015,"Normal control",healthy,TRUE
+SRR18003790,SAMN25819330,NC016,NC016,"Normal control",healthy,TRUE
+SRR18003788,SAMN25819331,NC017,NC017,"Normal control",healthy,TRUE
+SRR18003787,SAMN25819332,NC018,NC018,"Normal control",healthy,TRUE
+SRR18003755,SAMN25819333,NC019,NC019,"Normal control",healthy,TRUE
+SRR18003753,SAMN25819334,NC020,NC020,"Normal control",healthy,TRUE
+SRR18003752,SAMN25819335,NC021,NC021,"Normal control",healthy,TRUE
+SRR18003751,SAMN25819336,NC022,NC022,"Normal control",healthy,TRUE
+SRR18003750,SAMN25819337,NC023,NC023,"Normal control",healthy,TRUE
+SRR18003749,SAMN25819338,NC024,NC024,"Normal control",healthy,TRUE
+SRR18003748,SAMN25819339,NC025,NC025,"Normal control",healthy,TRUE
