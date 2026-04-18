@@ -2,13 +2,14 @@
 """
 Train a classifier on tetranucleotide frequency profiles (256 ACGT 4-mers).
 
-Pipeline: **CLR** (always on) → optional ``StandardScaler`` → **PCA** → **KNN**.
+Pipeline: optional **CLR** (on by default) → optional ``StandardScaler`` → **PCA** → **KNN**.
 PCA ``n_components`` starts at ``min(256, n_train - 1)`` (“off”: no reduction below the
 train-feasible rank), then halves (128, 64, …), keeping only sizes whose **cumulative**
 explained variance on the **training** fold is at least ``--pca-min-variance`` (default 0.9).
 
 Stratified 70/10/20 train/val/test; hyperparameters tuned on the validation set only
-(no cross-validation); then ``sklearn.metrics.classification_report`` on the test set.
+(no cross-validation). We report macro- and micro-averaged ROC AUC (one-vs-rest) on the
+test set. Use ``--baselines`` for majority-class and stratified-random dummy baselines.
 
 The frequency table produced by calculate_tetranucleotide_frequencies.py uses the
 column name ``sample_label``. You can override with ``--label-column`` (e.g. if your
@@ -26,7 +27,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+from sklearn.dummy import DummyClassifier
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
@@ -153,14 +155,17 @@ def _parse_csv_strs(s: str) -> List[str]:
     return out
 
 
-def _clr_then_scale_train(
+def _pre_pca_train_matrix(
     X_train: np.ndarray,
     *,
+    use_clr: bool,
     pseudocount: float,
     use_scaler: bool,
 ) -> np.ndarray:
-    clr = CLRTransformer(pseudocount=pseudocount)
-    z = clr.fit_transform(X_train)
+    """Match pipeline input to PCA for explained-variance grid (train fold only)."""
+    z = X_train
+    if use_clr:
+        z = CLRTransformer(pseudocount=pseudocount).fit_transform(z)
     if use_scaler:
         z = StandardScaler().fit_transform(z)
     return z
@@ -169,6 +174,7 @@ def _clr_then_scale_train(
 def build_pca_n_components_grid(
     X_train: np.ndarray,
     *,
+    use_clr: bool,
     pseudocount: float,
     use_scaler: bool,
     min_explained_variance: float,
@@ -178,7 +184,7 @@ def build_pca_n_components_grid(
     """
     PCA component counts: ``min(256, n_train-1)`` (off), then powers of two downward,
     capped to train-feasible size; keep only ``k`` with cumulative explained variance
-    >= ``min_explained_variance`` on the training fold (after CLR [+ scaler]).
+    >= ``min_explained_variance`` on the training fold (after optional CLR [+ scaler]).
     """
     n_samples, n_feat = X_train.shape
     if n_samples < 2:
@@ -187,8 +193,11 @@ def build_pca_n_components_grid(
     if max_comp < 1:
         raise SystemExit("Cannot fit PCA: max components < 1.")
 
-    z_train = _clr_then_scale_train(
-        X_train, pseudocount=pseudocount, use_scaler=use_scaler
+    z_train = _pre_pca_train_matrix(
+        X_train,
+        use_clr=use_clr,
+        pseudocount=pseudocount,
+        use_scaler=use_scaler,
     )
     pca_full = PCA(
         n_components=max_comp, svd_solver="full", random_state=pca_random_state
@@ -224,15 +233,16 @@ def build_pca_n_components_grid(
 
 def make_pipeline(
     *,
+    use_clr: bool,
     pseudocount: float,
     use_scaler: bool,
     pca_n_components: int,
     pca_random_state: int,
 ) -> Pipeline:
-    """CLR → optional StandardScaler → PCA → KNeighborsClassifier."""
-    steps: List[Tuple[str, object]] = [
-        ("clr", CLRTransformer(pseudocount=pseudocount)),
-    ]
+    """Optional CLR → optional StandardScaler → PCA → KNeighborsClassifier."""
+    steps: List[Tuple[str, object]] = []
+    if use_clr:
+        steps.append(("clr", CLRTransformer(pseudocount=pseudocount)))
     if use_scaler:
         steps.append(("scaler", StandardScaler()))
     steps.append(
@@ -292,6 +302,47 @@ def tune_knn_pca_on_val(
     return best_params, best_score
 
 
+def test_macro_micro_roc_auc(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    classes: np.ndarray,
+) -> Tuple[float, float]:
+    """Macro- and micro-averaged one-vs-rest ROC AUC (multiclass); NaNs if undefined."""
+    classes = np.asarray(classes)
+    y_true = np.asarray(y_true)
+    if classes.size < 2 or np.unique(y_true).size < 2:
+        return float("nan"), float("nan")
+    try:
+        macro = float(
+            roc_auc_score(
+                y_true,
+                y_proba,
+                average="macro",
+                multi_class="ovr",
+                labels=classes,
+            )
+        )
+        micro = float(
+            roc_auc_score(
+                y_true,
+                y_proba,
+                average="micro",
+                multi_class="ovr",
+                labels=classes,
+            )
+        )
+    except ValueError:
+        return float("nan"), float("nan")
+    return macro, micro
+
+
+def _format_auc_pair(macro: float, micro: float, *, digits: int = 6) -> str:
+    def fmt(x: float) -> str:
+        return f"{x:.{digits}f}" if np.isfinite(x) else "nan"
+
+    return f"macro-averaged ROC AUC = {fmt(macro)}, micro-averaged ROC AUC = {fmt(micro)}"
+
+
 def _label_counts(y: np.ndarray) -> Dict[str, int]:
     out: Dict[str, int] = {}
     for lab in y:
@@ -308,8 +359,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--csv",
         type=Path,
-        default=root / "tetranucleotide_frequencies.csv",
-        help="Path to tetranucleotide frequency CSV (default: repo root file).",
+        default=root / "outputs" / "tetranucleotide_frequencies.csv",
+        help="Path to tetranucleotide frequency CSV (default: repo root outputs/ file).",
     )
     parser.add_argument(
         "--label-column",
@@ -325,20 +376,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--no-scaler",
         action="store_true",
-        help="Disable StandardScaler between CLR and PCA.",
+        help="Disable StandardScaler before PCA.",
+    )
+    parser.add_argument(
+        "--no-clr",
+        action="store_true",
+        help="Disable CLR; use raw frequency features before scaler/PCA (default: CLR on).",
     )
     parser.add_argument(
         "--clr-pseudocount",
         type=float,
         default=1e-6,
-        help="Additive constant before log in CLR (default: 1e-6).",
+        help="Additive constant before log in CLR (default: 1e-6; ignored with --no-clr).",
     )
     parser.add_argument(
         "--pca-min-variance",
         type=float,
         default=0.9,
-        help="Minimum cumulative explained variance on training CLR(+scaler) for a "
-        "candidate n_components (default: 0.9).",
+        help="Minimum cumulative explained variance on the training fold (after preprocessing "
+        "before PCA) for a candidate n_components (default: 0.9).",
+    )
+    parser.add_argument(
+        "--baselines",
+        action="store_true",
+        help="Also report test ROC AUC for majority-class and stratified-random baselines.",
     )
     parser.add_argument(
         "--n-neighbors",
@@ -393,10 +454,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Train class counts: {_label_counts(y_train)}", flush=True)
     print(f"Val class counts: {_label_counts(y_val)}", flush=True)
     print(f"Test class counts: {_label_counts(y_test)}", flush=True)
+    print(f"CLR: {'off' if args.no_clr else 'on'}", flush=True)
 
     use_scaler = not args.no_scaler
+    use_clr = not args.no_clr
     n_comp_grid, train_cumsum_evr = build_pca_n_components_grid(
         X_train,
+        use_clr=use_clr,
         pseudocount=args.clr_pseudocount,
         use_scaler=use_scaler,
         min_explained_variance=args.pca_min_variance,
@@ -415,6 +479,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     pipe = make_pipeline(
+        use_clr=use_clr,
         pseudocount=args.clr_pseudocount,
         use_scaler=use_scaler,
         pca_n_components=n_comp_grid[0],
@@ -446,13 +511,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         clf__weights=best_params["weights"],
     )
     pipe.fit(X_train, y_train)
-    y_test_pred = pipe.predict(X_test)
-    print("\nClassification report (test set):\n", flush=True)
-    print(
-        classification_report(y_test, y_test_pred, digits=4),
-        end="",
-        flush=True,
-    )
+    y_proba = pipe.predict_proba(X_test)
+    clf_classes = pipe.named_steps["clf"].classes_
+    macro, micro = test_macro_micro_roc_auc(y_test, y_proba, clf_classes)
+    print("\nTest set (one-vs-rest ROC AUC):", flush=True)
+    print(f"  KNN: {_format_auc_pair(macro, micro)}", flush=True)
+
+    if args.baselines:
+        print("\nTest set baselines (one-vs-rest ROC AUC):", flush=True)
+        maj = DummyClassifier(strategy="most_frequent")
+        maj.fit(X_train, y_train)
+        m_macro, m_micro = test_macro_micro_roc_auc(
+            y_test, maj.predict_proba(X_test), maj.classes_
+        )
+        print(f"  Majority class: {_format_auc_pair(m_macro, m_micro)}", flush=True)
+
+        strat = DummyClassifier(
+            strategy="stratified", random_state=args.random_state
+        )
+        strat.fit(X_train, y_train)
+        s_macro, s_micro = test_macro_micro_roc_auc(
+            y_test, strat.predict_proba(X_test), strat.classes_
+        )
+        print(f"  Stratified random: {_format_auc_pair(s_macro, s_micro)}", flush=True)
     return 0
 
 

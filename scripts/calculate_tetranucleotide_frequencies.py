@@ -357,7 +357,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    label_fieldnames = ["data_file", "study_name", "Run", "sample_label"]
+    label_fieldnames = ["cancer_type", "study_name", "Run", "sample_label"]
     feature_fieldnames = list(TETRAMERS)
     fieldnames = label_fieldnames + feature_fieldnames
 
@@ -382,7 +382,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         for csv_path in data_files:
             study_name = csv_path.stem
-            data_file = csv_path.relative_to(data_dir).as_posix()
+            rel_path = csv_path.relative_to(data_dir)
+            data_file = rel_path.as_posix()
+            cancer_type = rel_path.parent.name if len(rel_path.parts) >= 2 else ""
             fasta_dir = fasta_root / study_name
 
             with open(csv_path, newline="") as in_f:
@@ -468,7 +470,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
                 pct = percentages_from_counts(counts)
                 out_row: Dict[str, object] = {
-                    "data_file": data_file,
+                    "cancer_type": cancer_type,
                     "study_name": study_name,
                     "Run": run,
                     "sample_label": (row.get("sample_label") or "").strip(),

@@ -30,3 +30,8 @@ The gzipped sequence files are stored under `fasta/` in a separate directory for
 
 Use `scripts/calculate_tetranucleotide_frequencies.py` to build a CSV of tetranucleotide (4-mer) frequency profiles for model training from the downloaded FASTA files.
 The script only process rows with `sample_used=TRUE` in the CSV files under `data/` and writes one table (`outputs/tetranucleotide_frequencies.csv`) with labels plus 256 feature columns (percentages of 4-mer counts across all sequences in each FASTA file).
+
+## Tetranucleotide classifier
+
+Use `scripts/fit_tetranucleotide_classifier.py` to fit a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set, and test metrics are macro- and micro-averaged one-vs-rest ROC AUC.
+We ran the script with the `--baselines` argument to generate `outputs/classifier_results.txt`.

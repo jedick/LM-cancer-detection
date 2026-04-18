@@ -19,10 +19,19 @@ We calculated tetramer frequencies for each run by counting 4-mers within each s
 
 We split the data into stratified training, validation, and test sets (70:10:20). We held the validation set fixed (no cross-validation) to use the same splits for training both the LM (expensive compute - only one val set feasible) and this classical model.
 
-We trained a K-nearest neighbors classifier on the 256 frequency features. We applied a centered log-ratio transform (CLR), standardized the CLR coordinates, then applied PCA. The number of components in PCA starts with the maximum rank count followed by halves (128, 64, and so on capped by the training sample size) until the cumulative explained variance on the training fold falls below 0.9. We tuned number of PCA components, number of KNN nneighbors, and weights by grid search on the validation set only, then fit the chosen pipeline on the training split. Performance metrics on the test set were calculated with scikit-learn’s classification_report.
+We trained a K-nearest neighbors classifier on the 256 frequency features. We applied a centered log-ratio transform (CLR), standardized the CLR coordinates, then applied PCA. The number of components in PCA starts with the maximum rank count followed by halves (128, 64, and so on capped by the training sample size) until the cumulative explained variance on the training fold falls below 0.9. We tuned number of PCA components, number of KNN nneighbors, and weights by grid search on the validation set only, then fit the chosen pipeline on the training split. Performance metrics (macro- and micro-averaged AUC, one-vs-rest) were calculated for the test set.
 
 ## Results
 
 ### KNN classification
 
+Table 1 reports test-set one-vs-rest ROC AUC (macro- and micro-averaged) for the majority-class baseline and the KNN classifier.
 
+<!-- classifier-table-1 -->
+| Model | Macro AUC | Micro AUC |
+| :--- | ---: | ---: |
+| Majority class | 0.500 | 0.652 |
+| KNN | 0.769 | 0.807 |
+<!-- /classifier-table-1 -->
+
+The KNN model exceeds the baseline on both averages.
