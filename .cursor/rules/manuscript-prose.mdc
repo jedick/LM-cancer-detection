@@ -1,0 +1,45 @@
+---
+description: Voice, tense, and prose standards for human-readable reports under report/
+globs: report/**/*.md
+alwaysApply: false
+---
+
+# Manuscript and report prose
+
+Use this rule when drafting or editing `report/**/*.md` (for example `manuscript.md`). The goal is a readable scientific report in plain English, not a walkthrough of scripts.
+
+## Voice and tense
+
+- Use **active voice with “We”** as the default in Methods (and elsewhere it fits).
+- **Methods:** mostly **past tense** (“We collected…”, “We trained…”).
+- **Results:** **present tense** for findings and metrics (“The model achieves…”).
+- **Vary voice occasionally** for emphasis or flow. A short **passive** sentence is fine when it lands well (for example how a metric was computed).
+
+## Paragraph openings and structure
+
+- **Start each subsection paragraph with background** that orients the reader (what a sample is, what the data represent) before procedures or implementation choices.
+- **Vary paragraph length.** One crisp sentence is acceptable when it carries a single fact (for example a tight summary of tetramer frequencies).
+- Prefer **several short paragraphs** over one long block when the content naturally splits (for example label definitions versus inclusion rules).
+
+## What to include and omit
+
+- **Do not** narrate minor **file operations** or naming conventions (no “we treat the filename stem as the study name,” path templates, or similar).
+- **You may** briefly say what lives in the repository and how data were obtained at a high level (for example SRA accessions and metadata stored in-repo; reads downloaded from NCBI).
+- **Omit** small mechanical details unless they change interpretation (for example rounding) and other **non-essential** bookkeeping.
+- Describe **default analysis steps plainly** without hedging with “optionally” when the manuscript describes the pipeline we actually ran (for example standardized CLR coordinates).
+
+## Wording and readability
+
+- **Join short related steps with “then”** where the sequence is linear.
+- **Spell out compound nouns** in prose (“performance on the test set,” not “test-set performance”).
+- **Minimize code identifiers** (variable names, column names, path segments). Prefer natural phrases (“colorectal cancer,” not `colorectal_cancer`).
+- **Do not use backticks** for ordinary words or dataset labels. Reserve code styling for true code or API symbols when needed.
+- **Keep underscores** where they belong to real identifiers readers may look up (for example **classification_report**).
+
+## Heuristics from the edited manuscript (style diff)
+
+- Prefer a **descriptive document title** when the report warrants it, not only “Manuscript.”
+- State **study scope and inclusion rationale** in plain language (how many studies, which disease contexts, label requirements) instead of schema-level narration.
+- When labels need nuance, **define categories in prose** (what “benign” includes, how invasive versus in-situ cancers are grouped) and separate **auditability** (what remains on file) from **training eligibility** (what we excluded).
+- For models and splits, lead with **design rationale** where it matters (for example a **single fixed validation set** shared between an LM and a classical model because LM training is expensive and cross-validation is not used), then describe the classifier and preprocessing chain.
+- Describe hyperparameter search **in words** (“number of PCA components,” “number of neighbors,” “weights”) rather than a list of parameter names with code formatting.
