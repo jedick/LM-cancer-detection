@@ -33,5 +33,6 @@ The script only process rows with `sample_used=TRUE` in the CSV files under `dat
 
 ## Tetranucleotide classifier
 
-Use `scripts/fit_tetranucleotide_classifier.py` to fit a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set, and test metrics are macro- and micro-averaged one-vs-rest ROC AUC.
-We ran the script with the `--baselines` argument to generate `outputs/classifier_results.txt`.
+Use `scripts/fit_tetranucleotide_classifier.py` to fit a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
+The script support two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
+We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `outputs/`.

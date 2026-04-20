@@ -8,7 +8,9 @@ train-feasible rank), then halves (128, 64, …), keeping only sizes whose **cum
 explained variance on the **training** fold is at least ``--pca-min-variance`` (default 0.9).
 
 Stratified 70/10/20 train/val/test; hyperparameters tuned on the validation set only
-(no cross-validation). We report macro- and micro-averaged ROC AUC (one-vs-rest) on the
+(no cross-validation). We first split on original labels, then apply one of two binary
+tasks within each split: ``cancer_diagnosis`` (all samples; cancer vs healthy) or
+``cancer_type`` (cancer-only; breast vs colorectal). We report binary ROC AUC on the
 test set. Use ``--baselines`` for majority-class and stratified-random dummy baselines.
 
 The frequency table produced by calculate_tetranucleotide_frequencies.py uses the
@@ -41,6 +43,7 @@ TETRAMERS: Tuple[str, ...] = tuple(
 
 # Halving grid anchored at 256 (capped to train-feasible max components).
 _PCA_POW2_GRID: Tuple[int, ...] = (256, 128, 64, 32, 16, 8, 4, 2, 1)
+CANCER_LABELS: Tuple[str, str] = ("breast_cancer", "colorectal_cancer")
 
 
 class CLRTransformer(BaseEstimator, TransformerMixin):
@@ -180,7 +183,7 @@ def build_pca_n_components_grid(
     min_explained_variance: float,
     pca_random_state: int,
     n_feature_dims: int = 256,
-) -> Tuple[List[int], np.ndarray]:
+) -> List[int]:
     """
     PCA component counts: ``min(256, n_train-1)`` (off), then powers of two downward,
     capped to train-feasible size; keep only ``k`` with cumulative explained variance
@@ -228,7 +231,7 @@ def build_pca_n_components_grid(
         raise SystemExit(
             "No PCA component counts met --pca-min-variance on the training fold."
         )
-    return candidates, csum
+    return candidates
 
 
 def make_pipeline(
@@ -302,45 +305,30 @@ def tune_knn_pca_on_val(
     return best_params, best_score
 
 
-def test_macro_micro_roc_auc(
+def test_binary_roc_auc(
     y_true: np.ndarray,
     y_proba: np.ndarray,
     classes: np.ndarray,
-) -> Tuple[float, float]:
-    """Macro- and micro-averaged one-vs-rest ROC AUC (multiclass); NaNs if undefined."""
+) -> float:
+    """Binary ROC AUC from class probabilities; NaN if undefined."""
     classes = np.asarray(classes)
     y_true = np.asarray(y_true)
-    if classes.size < 2 or np.unique(y_true).size < 2:
-        return float("nan"), float("nan")
+    if classes.size != 2 or np.unique(y_true).size < 2:
+        return float("nan")
+    pos_label = classes[1]
+    y_score = y_proba[:, 1]
     try:
-        macro = float(
-            roc_auc_score(
-                y_true,
-                y_proba,
-                average="macro",
-                multi_class="ovr",
-                labels=classes,
-            )
-        )
-        micro = float(
-            roc_auc_score(
-                y_true,
-                y_proba,
-                average="micro",
-                multi_class="ovr",
-                labels=classes,
-            )
-        )
+        auc = float(roc_auc_score(y_true == pos_label, y_score))
     except ValueError:
-        return float("nan"), float("nan")
-    return macro, micro
+        return float("nan")
+    return auc
 
 
-def _format_auc_pair(macro: float, micro: float, *, digits: int = 6) -> str:
+def _format_auc(auc: float, *, digits: int = 6) -> str:
     def fmt(x: float) -> str:
         return f"{x:.{digits}f}" if np.isfinite(x) else "nan"
 
-    return f"macro-averaged ROC AUC = {fmt(macro)}, micro-averaged ROC AUC = {fmt(micro)}"
+    return f"ROC AUC = {fmt(auc)}"
 
 
 def _label_counts(y: np.ndarray) -> Dict[str, int]:
@@ -348,6 +336,38 @@ def _label_counts(y: np.ndarray) -> Dict[str, int]:
     for lab in y:
         out[lab] = out.get(lab, 0) + 1
     return dict(sorted(out.items(), key=lambda kv: kv[0]))
+
+
+def _prepare_task_data(
+    X: np.ndarray, y: np.ndarray, task: str
+) -> Tuple[np.ndarray, np.ndarray]:
+    if task == "cancer_diagnosis":
+        mapped = np.where(np.isin(y, CANCER_LABELS), "cancer", "healthy")
+        return X, mapped
+    if task == "cancer_type":
+        mask = np.isin(y, CANCER_LABELS)
+        if not np.any(mask):
+            raise SystemExit("Task cancer_type selected, but no cancer samples were found.")
+        X_task = X[mask]
+        y_task = y[mask]
+        return X_task, y_task
+    raise SystemExit(f"Unknown --task value: {task!r}")
+
+
+def _require_binary_classes(y: np.ndarray, *, split_name: str, task: str) -> None:
+    classes = np.unique(y)
+    if classes.size != 2:
+        raise SystemExit(
+            f"Task {task!r} requires exactly 2 classes in {split_name}; got {classes.tolist()}."
+        )
+
+
+def _task_description(task: str) -> str:
+    if task == "cancer_diagnosis":
+        return "All samples: cancer vs healthy."
+    if task == "cancer_type":
+        return "Cancer-only samples: breast_cancer vs colorectal_cancer."
+    raise SystemExit(f"Unknown --task value: {task!r}")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -366,6 +386,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--label-column",
         default=None,
         help="Target column name (default: sample_labels if present else sample_label).",
+    )
+    parser.add_argument(
+        "--task",
+        choices=("cancer_diagnosis", "cancer_type"),
+        default="cancer_diagnosis",
+        help="Binary task: cancer_diagnosis (all samples) or cancer_type (cancer-only).",
     )
     parser.add_argument(
         "--random-state",
@@ -435,30 +461,36 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise SystemExit("CSV has no header row.")
         label_column = _resolve_label_column(reader.fieldnames, args.label_column)
 
-    X, y = _load_xy(csv_path, label_column)
+    X_raw, y_raw = _load_xy(csv_path, label_column)
     n_neighbors_list = _parse_csv_ints(args.n_neighbors)
     weights_list = _parse_csv_strs(args.weights)
 
-    print(f"CSV: {csv_path}", flush=True)
-    print(f"Label column: {label_column}", flush=True)
-    print(f"Samples: {X.shape[0]}, features: {X.shape[1]}", flush=True)
-    print(f"Class counts (all data): {_label_counts(y)}", flush=True)
-
-    X_train, X_val, X_test, y_train, y_val, y_test = _stratified_split_70_10_20(
-        X, y, random_state=args.random_state
+    # Split once on original labels so both tasks share a consistent base partition.
+    X_train_raw, X_val_raw, X_test_raw, y_train_raw, y_val_raw, y_test_raw = (
+        _stratified_split_70_10_20(X_raw, y_raw, random_state=args.random_state)
     )
+    X_train, y_train = _prepare_task_data(X_train_raw, y_train_raw, args.task)
+    X_val, y_val = _prepare_task_data(X_val_raw, y_val_raw, args.task)
+    X_test, y_test = _prepare_task_data(X_test_raw, y_test_raw, args.task)
+    task_desc = _task_description(args.task)
+    _require_binary_classes(y_train, split_name="train split", task=args.task)
+    _require_binary_classes(y_val, split_name="validation split", task=args.task)
+    _require_binary_classes(y_test, split_name="test split", task=args.task)
+    y_all = np.concatenate((y_train, y_val, y_test))
+
+    print(f"CSV: {csv_path}", flush=True)
+    print(f"Task: {args.task} ({task_desc})", flush=True)
+    print(f"Samples: {len(y_all)}, features: {X_train.shape[1]}", flush=True)
+    print(f"Class counts: {_label_counts(y_all)}", flush=True)
     print(
         f"Split sizes — train: {len(y_train)}, val: {len(y_val)}, test: {len(y_test)}",
         flush=True,
     )
-    print(f"Train class counts: {_label_counts(y_train)}", flush=True)
-    print(f"Val class counts: {_label_counts(y_val)}", flush=True)
-    print(f"Test class counts: {_label_counts(y_test)}", flush=True)
     print(f"CLR: {'off' if args.no_clr else 'on'}", flush=True)
 
     use_scaler = not args.no_scaler
     use_clr = not args.no_clr
-    n_comp_grid, train_cumsum_evr = build_pca_n_components_grid(
+    n_comp_grid = build_pca_n_components_grid(
         X_train,
         use_clr=use_clr,
         pseudocount=args.clr_pseudocount,
@@ -466,15 +498,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         min_explained_variance=args.pca_min_variance,
         pca_random_state=args.random_state,
     )
-    max_train_comp = int(min(256, X_train.shape[1], X_train.shape[0] - 1))
     print(
-        f"PCA n_components candidates (train max={max_train_comp}, "
-        f"min cumulative EV >= {args.pca_min_variance}): {n_comp_grid}",
-        flush=True,
-    )
-    print(
-        f"Training-fold cumulative EV at largest candidate ({n_comp_grid[0]} comps): "
-        f"{float(train_cumsum_evr[min(n_comp_grid[0], len(train_cumsum_evr)) - 1]):.6f}",
+        f"PCA n_components candidates (min cumulative EV >= {args.pca_min_variance}): "
+        f"{n_comp_grid}",
         flush=True,
     )
 
@@ -486,7 +512,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         pca_random_state=args.random_state,
     )
     print(
-        f"Tuning on validation ({args.scoring}), grid "
+        "Tuning on validation, grid "
         f"n_components={n_comp_grid}, "
         f"n_neighbors={n_neighbors_list}, weights={weights_list}",
         flush=True,
@@ -513,27 +539,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pipe.fit(X_train, y_train)
     y_proba = pipe.predict_proba(X_test)
     clf_classes = pipe.named_steps["clf"].classes_
-    macro, micro = test_macro_micro_roc_auc(y_test, y_proba, clf_classes)
-    print("\nTest set (one-vs-rest ROC AUC):", flush=True)
-    print(f"  KNN: {_format_auc_pair(macro, micro)}", flush=True)
+    knn_auc = test_binary_roc_auc(y_test, y_proba, clf_classes)
+    print("\nTest set (binary ROC AUC):", flush=True)
+    print(f"  KNN: {_format_auc(knn_auc)}", flush=True)
 
     if args.baselines:
-        print("\nTest set baselines (one-vs-rest ROC AUC):", flush=True)
+        print("\nTest set baselines (binary ROC AUC):", flush=True)
         maj = DummyClassifier(strategy="most_frequent")
         maj.fit(X_train, y_train)
-        m_macro, m_micro = test_macro_micro_roc_auc(
-            y_test, maj.predict_proba(X_test), maj.classes_
-        )
-        print(f"  Majority class: {_format_auc_pair(m_macro, m_micro)}", flush=True)
+        m_auc = test_binary_roc_auc(y_test, maj.predict_proba(X_test), maj.classes_)
+        print(f"  Majority class: {_format_auc(m_auc)}", flush=True)
 
         strat = DummyClassifier(
             strategy="stratified", random_state=args.random_state
         )
         strat.fit(X_train, y_train)
-        s_macro, s_micro = test_macro_micro_roc_auc(
-            y_test, strat.predict_proba(X_test), strat.classes_
-        )
-        print(f"  Stratified random: {_format_auc_pair(s_macro, s_micro)}", flush=True)
+        s_auc = test_binary_roc_auc(y_test, strat.predict_proba(X_test), strat.classes_)
+        print(f"  Stratified random: {_format_auc(s_auc)}", flush=True)
     return 0
 
 
