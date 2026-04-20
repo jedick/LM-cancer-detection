@@ -1,0 +1,37 @@
+---
+description: Concise README style for pipeline usage sections
+globs: README.md
+alwaysApply: false
+---
+
+# README Maintenance Style
+
+Use this rule when editing `README.md`. Keep sections short, practical, and easy to scan.
+
+## Core style
+
+- Follow existing section patterns such as **Downloading data** and **Tetranucleotide frequencies**: 2-4 plain sentences, no long digressions.
+- Prioritize the main workflow: what the script does and how it was used to produce key outputs.
+- Prefer one concise sentence about usage over exhaustive option-by-option documentation.
+
+## What to include
+
+- Script purpose in plain language.
+- Primary input and primary output files.
+- A short mention of the key task switch or mode when it is central (for example `--task`).
+- A brief statement of how result files were generated (for example `*_results.txt` in `outputs/`).
+
+## What to omit
+
+- Detailed argument catalogs and full CLI reference material.
+- Fine-grained label-mapping details unless essential to understand outputs.
+- Secondary evaluation details (for example specific baseline variants or metric breakdowns) when documented elsewhere.
+- Mechanical setup details that do not help comprehension (for example “run from repository root”).
+- Long bullet lists or code blocks when one short sentence communicates the same information.
+
+## Preferred phrasing pattern
+
+Use this structure for classifier sections:
+1) what the script fits and on which input table,
+2) the main task switch in plain words,
+3) one short line describing how the output result files were generated.

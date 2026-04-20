@@ -1,17 +1,21 @@
 ---
 name: manuscript-classifier-table1
 description: >-
-  Regenerates Table 1 in report/manuscript.md from outputs/classifier_results.txt.
-  Runs report/table1_from_classifier.py and replaces the Markdown table between HTML
-  comment markers. Use when classifier_results.txt changes, when updating the Results
-  table, or when the user asks to refresh Table 1 or the KNN classification table.
+  Regenerates Table 1 in report/manuscript.md from binary-task classifier logs:
+  outputs/cancer_diagnosis_results.txt and outputs/cancer_type_results.txt.
+  Runs report/table1_from_classifier.py and replaces the Markdown table between
+  HTML comment markers. Use when either task output changes, when updating the
+  Results table, or when the user asks to refresh Table 1.
 ---
 
 # Manuscript Table 1 (classifier AUC)
 
 ## Goal
 
-Keep **Table 1** in `report/manuscript.md` in sync with **`outputs/classifier_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py`, typically run with **`--baselines`**).
+Keep **Table 1** in `report/manuscript.md` in sync with:
+
+- **`outputs/cancer_diagnosis_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_diagnosis --baselines`)
+- **`outputs/cancer_type_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_type --baselines`)
 
 ## Steps
 
@@ -21,7 +25,10 @@ Keep **Table 1** in `report/manuscript.md` in sync with **`outputs/classifier_re
    python report/table1_from_classifier.py
    ```
 
-   Optional: `--input PATH` if the log lives elsewhere; `--decimals N` (default 3).
+   Optional overrides:
+   - `--diagnosis-input PATH`
+   - `--type-input PATH`
+   - `--decimals N` (default 3)
 
 2. Open **`report/manuscript.md`**. Find the block between these markers:
 
@@ -34,5 +41,8 @@ Keep **Table 1** in `report/manuscript.md` in sync with **`outputs/classifier_re
 
 ## Notes
 
-- The script includes **Majority class** and **KNN** only (macro- and micro-averaged one-vs-rest ROC AUC).
-- If parsing fails, re-run the classifier and ensure the log still contains lines starting with `  KNN:` and `  Majority class:` under the test-set sections.
+- The script includes **Majority class** and **KNN** only.
+- Table columns are binary-task AUCs: **Cancer diagnosis AUC** and **Cancer type AUC**.
+- If parsing fails, re-run the classifier and ensure each task log contains lines like:
+  - `  KNN: ROC AUC = ...`
+  - `  Majority class: ROC AUC = ...`
