@@ -21,6 +21,15 @@ We split the data into stratified training, validation, and test sets (70:10:20)
 
 We trained a K-nearest neighbors classifier on the 256 frequency features. We applied a centered log-ratio transform (CLR), standardized the CLR coordinates, then applied PCA. The number of components in PCA starts with the maximum rank count followed by halves (128, 64, and so on capped by the training sample size) until the cumulative explained variance on the training fold falls below 0.9. We tuned number of PCA components, number of KNN nneighbors, and weights by grid search on the validation set only, then fit the chosen pipeline on the training split. Performance metrics (macro- and micro-averaged AUC, one-vs-rest) were calculated for the test set.
 
+### Classification using cluster abundance profiles
+
+16S rRNA gene sequences from [N] sequencing runs across eight studies (four breast cancer, four colorectal cancer, and matched normal controls) were analyzed using a reference-free, alignment-free approach that avoids taxonomic classification.
+For each sequence, a 256-dimensional feature vector was computed from the frequencies of all possible tetranucleotide (4-mer) motifs. Because the resulting feature space is high-dimensional and correlated, principal component analysis (PCA) was applied to the pooled 4-mer frequency matrix to reduce dimensionality, retaining components explaining [X]% of cumulative variance.
+A representative subset of sequences was then used to train an unsupervised clustering model (k-means, k=[K]) in the reduced PCA space, yielding K cluster centroids that define a sequence "codebook." Each cluster can be interpreted as a group of sequences sharing similar nucleotide composition, analogous to compositional operational taxonomic units (OTUs), but derived entirely from sequence statistics rather than reference databases or sequence alignment.
+
+To generate run-level features, all sequences in each sequencing run were assigned to their nearest cluster centroid, and the resulting cluster membership counts were normalized to relative abundances (i.e., divided by the total number of sequences per run). This produced a K-dimensional **cluster abundance profile** for each run. These profiles served as the feature matrix for supervised classification, distinguishing cancer from normal samples and breast from colorectal cancer, using [classifier, e.g., random forest / regularized logistic regression / SVM].
+This approach captures compositional heterogeneity at the individual sequence level rather than averaging tetranucleotide frequencies across entire runs, preserving information about the distribution of distinct sequence types within each sample.
+
 ## Results
 
 ### KNN classification
