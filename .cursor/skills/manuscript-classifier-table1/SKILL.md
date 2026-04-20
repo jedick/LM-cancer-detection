@@ -1,9 +1,9 @@
 ---
 name: manuscript-classifier-table1
 description: >-
-  Regenerates Table 1 in report/manuscript.md from binary-task classifier logs:
+  Regenerates Table 1 in manuscript/report.md from binary-task classifier logs:
   outputs/cancer_diagnosis_results.txt and outputs/cancer_type_results.txt.
-  Runs report/table1_from_classifier.py and replaces the Markdown table between
+  Runs manuscript/table1_from_classifier.py and replaces the Markdown table between
   HTML comment markers. Use when either task output changes, when updating the
   Results table, or when the user asks to refresh Table 1.
 ---
@@ -12,7 +12,7 @@ description: >-
 
 ## Goal
 
-Keep **Table 1** in `report/manuscript.md` in sync with:
+Keep **Table 1** in `manuscript/report.md` in sync with:
 
 - **`outputs/cancer_diagnosis_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_diagnosis --baselines`)
 - **`outputs/cancer_type_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_type --baselines`)
@@ -22,7 +22,7 @@ Keep **Table 1** in `report/manuscript.md` in sync with:
 1. From the **repository root**, run:
 
    ```bash
-   python report/table1_from_classifier.py
+   python manuscript/table1_from_classifier.py
    ```
 
    Optional overrides:
@@ -30,7 +30,7 @@ Keep **Table 1** in `report/manuscript.md` in sync with:
    - `--type-input PATH`
    - `--decimals N` (default 3)
 
-2. Open **`report/manuscript.md`**. Find the block between these markers:
+2. Open **`manuscript/report.md`**. Find the block between these markers:
 
    - `<!-- classifier-table-1 -->`
    - `<!-- /classifier-table-1 -->`

@@ -1,12 +1,12 @@
 ---
-description: Voice, tense, and prose standards for human-readable reports under report/
-globs: report/**/*.md
+description: Voice, tense, and prose standards for human-readable reports under manuscript/
+globs: manuscript/**/*.md
 alwaysApply: false
 ---
 
 # Manuscript and report prose
 
-Use this rule when drafting or editing `report/**/*.md` (for example `manuscript.md`). The goal is a readable scientific report in plain English, not a walkthrough of scripts.
+Use this rule when drafting or editing `manuscript/**/*.md` (for example `report.md`). The goal is a readable scientific report in plain English, not a walkthrough of scripts.
 
 ## Voice and tense
 
