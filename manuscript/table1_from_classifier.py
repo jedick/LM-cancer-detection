@@ -2,8 +2,8 @@
 """
 Read binary-task classifier logs and print a Markdown table (majority-class + KNN AUC).
 
-Default inputs (repo-root relative): outputs/cancer_diagnosis_results.txt and
-outputs/cancer_type_results.txt.
+Default inputs (repo-root relative): results/cancer_diagnosis_results.txt and
+results/cancer_type_results.txt.
 """
 
 from __future__ import annotations
@@ -71,14 +71,14 @@ def main() -> int:
     p.add_argument(
         "--diagnosis-input",
         type=Path,
-        default=root / "outputs" / "cancer_diagnosis_results.txt",
-        help="Path to cancer_diagnosis classifier log (default: outputs/cancer_diagnosis_results.txt).",
+        default=root / "results" / "cancer_diagnosis_results.txt",
+        help="Path to cancer_diagnosis classifier log (default: results/cancer_diagnosis_results.txt).",
     )
     p.add_argument(
         "--type-input",
         type=Path,
-        default=root / "outputs" / "cancer_type_results.txt",
-        help="Path to cancer_type classifier log (default: outputs/cancer_type_results.txt).",
+        default=root / "results" / "cancer_type_results.txt",
+        help="Path to cancer_type classifier log (default: results/cancer_type_results.txt).",
     )
     p.add_argument(
         "--decimals",

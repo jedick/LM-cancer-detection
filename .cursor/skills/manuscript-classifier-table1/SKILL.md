@@ -2,7 +2,7 @@
 name: manuscript-classifier-table1
 description: >-
   Regenerates Table 1 in manuscript/report.md from binary-task classifier logs:
-  outputs/cancer_diagnosis_results.txt and outputs/cancer_type_results.txt.
+  results/cancer_diagnosis_results.txt and results/cancer_type_results.txt.
   Runs manuscript/table1_from_classifier.py and replaces the Markdown table between
   HTML comment markers. Use when either task output changes, when updating the
   Results table, or when the user asks to refresh Table 1.
@@ -14,8 +14,8 @@ description: >-
 
 Keep **Table 1** in `manuscript/report.md` in sync with:
 
-- **`outputs/cancer_diagnosis_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_diagnosis --baselines`)
-- **`outputs/cancer_type_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_type --baselines`)
+- **`results/cancer_diagnosis_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_diagnosis --baselines`)
+- **`results/cancer_type_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_type --baselines`)
 
 ## Steps
 

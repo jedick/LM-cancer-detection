@@ -1,4 +1,2 @@
 fasta
-outputs/*.csv
-outputs/breast/
-outputs/colorectal/
+outputs/

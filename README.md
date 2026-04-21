@@ -37,7 +37,7 @@ The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv` hold **raw inte
 
 Use `scripts/fit_tetranucleotide_classifier.py` to fit a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
 The script supports two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
-We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `outputs/`.
+We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `results/`.
 
 ## Unsupervised Clustering with Cluster Abundance Profiling
 
