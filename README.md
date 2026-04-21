@@ -28,11 +28,18 @@ The gzipped sequence files are stored under `fasta/` in a separate directory for
 
 ## Tetranucleotide frequencies
 
-Use `scripts/calculate_tetranucleotide_frequencies.py` to build a CSV of tetranucleotide (4-mer) frequency profiles for model training from the downloaded FASTA files.
-The script only process rows with `sample_used=TRUE` in the CSV files under `data/` and writes one table (`outputs/tetranucleotide_frequencies.csv`) with labels plus 256 feature columns (percentages of 4-mer counts across all sequences in each FASTA file).
+Use `scripts/calculate_tetranucleotide_frequencies.py` to build tetranucleotide (4-mer) profiles from the downloaded FASTA files.
+The script only processes rows with `sample_used=TRUE` in the CSV files under `data/`.
+It writes two outputs from the same pass: `outputs/tetranucleotide_frequencies.csv` has one row per run with labels plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
+The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv` hold **raw integer** 4-mer counts per sequence for Unsupervised Clustering with Cluster Abundance Profiling (see below); each file has one row per FASTA sequence in encounter order, 256 columns with no header row, in the same lexicographic ACGT 4-mer order as the 256 feature columns in `outputs/tetranucleotide_frequencies.csv`.
 
-## Tetranucleotide classifier
+## Run-level tetranucleotide classifier
 
 Use `scripts/fit_tetranucleotide_classifier.py` to fit a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
-The script support two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
+The script supports two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
 We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `outputs/`.
+
+## Unsupervised Clustering with Cluster Abundance Profiling
+
+This stage takes the sequence-level tetranucleotide count files described above.
+Further documentation of the clustering and abundance profiling workflow will be added as that part of the pipeline is implemented.

@@ -4,18 +4,21 @@ Compute tetranucleotide frequency profiles per sequencing run (Run).
 
 For each CSV row under data/ with sample_used=TRUE (case-insensitive), reads the
 matching gzip FASTA produced by download_sra_data.py (fasta/<study_name>/<Run>.fasta.gz),
-counts 4-mers in each
-FASTA sequence (no counting across sequence boundaries), sums counts for the run,
-converts to percentages (rounded to 3 decimals), and writes one CSV for ML training.
+counts 4-mers in each FASTA sequence (no counting across sequence boundaries), sums
+counts for the run, converts to percentages (rounded to 3 decimals), and writes
+outputs/tetranucleotide_frequencies.csv for ML training.
 
-Progress: prints each study (CSV path and count of SRA runs), updates a single-line
-counter while processing runs, then prints a short per-study summary.
+Also writes per-run sequence-level 4-mer counts (256 integers per row, no header) to
+outputs/<cancer_type>/<study_name>/<Run>.csv for downstream clustering.
 
-Use --first-run-per-study to process only the first SRA accession row per study (CSV)
-for a quick sanity check before a full pass.
+Progress: prints each study data file and run count, updates a single-line counter
+while processing runs, then prints a short per-study summary.
 
-Use --profile to print per-study and total wall time split into gzip/read/parse vs
-tetramer counting (see tetramer_percentages_for_run).
+Use --first-run-per-study to process only the first eligible row per study for a quick
+sanity check before a full pass.
+
+Use --profile to print per-study and total wall time split into gzip/read/parse versus
+tetramer counting.
 
 If NumPy and Numba are installed, tetramer counting uses a small @njit kernel by default
 (fast on large sequences). Use --no-numba to force the pure-Python counter.
@@ -141,17 +144,14 @@ def _warmup_numba_kernel() -> None:
     _count_tetramers_numba(buf, tmp, _BASE_LUT_NUMBA)
 
 
-def configure_counting_backend(use_numba: bool) -> str:
-    """
-    Select tetramer counting implementation. Returns 'numba' or 'python'.
-    """
+def configure_counting_backend(use_numba: bool) -> None:
+    """Select tetramer counting implementation (Numba JIT when available, else pure Python)."""
     global _USE_NUMBA_COUNTING
     if use_numba and _NUMBA_KERNEL_AVAILABLE:
         _USE_NUMBA_COUNTING = True
         _warmup_numba_kernel()
-        return "numba"
-    _USE_NUMBA_COUNTING = False
-    return "python"
+    else:
+        _USE_NUMBA_COUNTING = False
 
 
 def accumulate_tetramers_from_sequence(
@@ -169,51 +169,69 @@ def accumulate_tetramers_from_sequence(
         count_tetramers_in_sequence(seq, counts_buffer)  # type: ignore[arg-type]
 
 
-def iter_fasta_sequences(gzip_path: Path) -> Iterable[str]:
-    """Yield DNA sequence strings (concatenated non-header lines) from a .fasta.gz file."""
+def iter_fasta_records(gzip_path: Path) -> Iterable[Tuple[str, str]]:
+    """Yield (header_without_>, sequence) records from a .fasta.gz file."""
     with gzip.open(gzip_path, "rt", encoding="ascii", errors="replace") as handle:
+        header: Optional[str] = None
         chunks: List[str] = []
         for raw in handle:
             line = raw.strip()
             if not line:
                 continue
             if line.startswith(">"):
-                if chunks:
-                    yield "".join(chunks)
+                if header is not None and chunks:
+                    yield header, "".join(chunks)
                     chunks = []
+                header = line[1:].strip()
                 continue
             chunks.append(line)
-        if chunks:
-            yield "".join(chunks)
+        if header is not None and chunks:
+            yield header, "".join(chunks)
 
 
-def tetramer_percentages_for_run(fasta_gz: Path) -> Tuple[List[int], Optional[str]]:
+def tetramer_counts_for_run_and_sequences(
+    fasta_gz: Path,
+) -> Tuple[List[int], List[List[int]], Optional[str]]:
     """
-    Sum tetranucleotide counts over all sequences in the FASTA, return counts and error.
+    One pass over the FASTA: tetranucleotide counts per sequence and summed run totals.
 
-    Returns (counts, error_message). counts is length 256; error_message set on I/O failure.
+    Returns (run_counts, per_sequence_counts, error_message).
+    run_counts is length 256; per_sequence_counts has one 256-count row per sequence.
+    error_message is set on I/O failure.
     """
     if _USE_NUMBA_COUNTING and np is not None:
-        counts_arr = np.zeros(256, dtype=np.int64)
+        run_counts_arr = np.zeros(256, dtype=np.int64)
+        seq_counts_arr = np.zeros(256, dtype=np.int64)
+        per_sequence_rows: List[List[int]] = []
         try:
-            for seq in iter_fasta_sequences(fasta_gz):
-                accumulate_tetramers_from_sequence(seq, counts_arr)
+            for _, seq in iter_fasta_records(fasta_gz):
+                seq_counts_arr.fill(0)
+                accumulate_tetramers_from_sequence(seq, seq_counts_arr)
+                run_counts_arr += seq_counts_arr
+                per_sequence_rows.append(seq_counts_arr.tolist())
         except OSError as exc:
-            return counts_arr.tolist(), str(exc)
-        return counts_arr.tolist(), None
+            return run_counts_arr.tolist(), per_sequence_rows, str(exc)
+        return run_counts_arr.tolist(), per_sequence_rows, None
 
-    counts: List[int] = [0] * 256
+    run_counts: List[int] = [0] * 256
+    seq_counts: List[int] = [0] * 256
+    per_sequence_rows: List[List[int]] = []
     try:
-        for seq in iter_fasta_sequences(fasta_gz):
-            accumulate_tetramers_from_sequence(seq, counts)
+        for _, seq in iter_fasta_records(fasta_gz):
+            for i in range(256):
+                seq_counts[i] = 0
+            accumulate_tetramers_from_sequence(seq, seq_counts)
+            for i, c in enumerate(seq_counts):
+                run_counts[i] += c
+            per_sequence_rows.append(seq_counts.copy())
     except OSError as exc:
-        return counts, str(exc)
-    return counts, None
+        return run_counts, per_sequence_rows, str(exc)
+    return run_counts, per_sequence_rows, None
 
 
-def tetramer_percentages_for_run_profiled(
+def tetramer_counts_for_run_and_sequences_profiled(
     fasta_gz: Path,
-) -> Tuple[List[int], Optional[str], FastaPhaseTimings]:
+) -> Tuple[List[int], List[List[int]], Optional[str], FastaPhaseTimings]:
     """
     Profile one FASTA pass, splitting wall time into:
     - io_parse_sec: gzip read/decompress + line parsing + sequence joins
@@ -221,11 +239,15 @@ def tetramer_percentages_for_run_profiled(
     """
     if _USE_NUMBA_COUNTING and np is not None:
         counts_buf: Union[List[int], np.ndarray] = np.zeros(256, dtype=np.int64)
+        seq_counts_arr = np.zeros(256, dtype=np.int64)
     else:
         counts_buf = [0] * 256
+        seq_counts_py = [0] * 256
+    per_sequence_rows: List[List[int]] = []
     timings = FastaPhaseTimings()
     try:
         with gzip.open(fasta_gz, "rt", encoding="ascii", errors="replace") as handle:
+            header: Optional[str] = None
             chunks: List[str] = []
             for raw in handle:
                 t0 = time.perf_counter()
@@ -234,34 +256,57 @@ def tetramer_percentages_for_run_profiled(
                     timings.io_parse_sec += time.perf_counter() - t0
                     continue
                 if line.startswith(">"):
-                    if chunks:
+                    if header is not None and chunks:
                         seq = "".join(chunks)
                         chunks = []
                         timings.io_parse_sec += time.perf_counter() - t0
                         c0 = time.perf_counter()
-                        accumulate_tetramers_from_sequence(seq, counts_buf)
+                        if _USE_NUMBA_COUNTING and np is not None:
+                            seq_counts_arr.fill(0)
+                            accumulate_tetramers_from_sequence(seq, seq_counts_arr)
+                            counts_buf += seq_counts_arr
+                            per_sequence_rows.append(seq_counts_arr.tolist())
+                        else:
+                            for i in range(256):
+                                seq_counts_py[i] = 0
+                            accumulate_tetramers_from_sequence(seq, seq_counts_py)
+                            for i, c in enumerate(seq_counts_py):
+                                counts_buf[i] += c  # type: ignore[index]
+                            per_sequence_rows.append(seq_counts_py.copy())
                         timings.count_sec += time.perf_counter() - c0
                     else:
                         timings.io_parse_sec += time.perf_counter() - t0
+                    header = line[1:].strip()
                     continue
                 chunks.append(line)
                 timings.io_parse_sec += time.perf_counter() - t0
 
-            if chunks:
+            if header is not None and chunks:
                 t0 = time.perf_counter()
                 seq = "".join(chunks)
                 timings.io_parse_sec += time.perf_counter() - t0
                 c0 = time.perf_counter()
-                accumulate_tetramers_from_sequence(seq, counts_buf)
+                if _USE_NUMBA_COUNTING and np is not None:
+                    seq_counts_arr.fill(0)
+                    accumulate_tetramers_from_sequence(seq, seq_counts_arr)
+                    counts_buf += seq_counts_arr
+                    per_sequence_rows.append(seq_counts_arr.tolist())
+                else:
+                    for i in range(256):
+                        seq_counts_py[i] = 0
+                    accumulate_tetramers_from_sequence(seq, seq_counts_py)
+                    for i, c in enumerate(seq_counts_py):
+                        counts_buf[i] += c  # type: ignore[index]
+                    per_sequence_rows.append(seq_counts_py.copy())
                 timings.count_sec += time.perf_counter() - c0
     except OSError as exc:
         if isinstance(counts_buf, list):
-            return counts_buf, str(exc), timings
-        return counts_buf.tolist(), str(exc), timings
+            return counts_buf, per_sequence_rows, str(exc), timings
+        return counts_buf.tolist(), per_sequence_rows, str(exc), timings
 
     if isinstance(counts_buf, list):
-        return counts_buf, None, timings
-    return counts_buf.tolist(), None, timings
+        return counts_buf, per_sequence_rows, None, timings
+    return counts_buf.tolist(), per_sequence_rows, None, timings
 
 
 def percentages_from_counts(counts: Sequence[int]) -> List[float]:
@@ -329,31 +374,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Error: no CSV files under {data_dir}", file=sys.stderr)
         return 1
 
-    counting_backend = configure_counting_backend(use_numba=not args.no_numba)
-    if counting_backend == "numba":
-        print("Tetramer counting: Numba JIT (install with: pip install numba numpy)", flush=True)
-    elif not args.no_numba and not _NUMBA_KERNEL_AVAILABLE:
-        print(
-            "Tetramer counting: pure Python (Numba not available; "
-            "`pip install numba numpy` for a faster counter).",
-            flush=True,
-        )
-    else:
-        print("Tetramer counting: pure Python (--no-numba).", flush=True)
+    configure_counting_backend(use_numba=not args.no_numba)
 
     first_run_per_study = args.first_run_per_study
     profile_mode = args.profile
-    if first_run_per_study:
-        print(
-            "First-run-per-study mode: only the first eligible row per CSV "
-            "(SRA Run + sample_used=TRUE) will be processed.",
-            flush=True,
-        )
-    if profile_mode:
-        print(
-            "Profile mode: timing FASTA I/O+parse separately from tetramer counting.",
-            flush=True,
-        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -368,11 +392,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     status_width = 100
 
-    def show_run_progress(
-        label: str, run_i: int, n_runs: int, run: str, note: str = ""
-    ) -> None:
+    def show_run_progress(run_i: int, n_runs: int, run: str, note: str = "") -> None:
         tail = f"  {note}" if note else ""
-        line = f"  {label}: {run_i}/{n_runs} runs  (current: {run}){tail}"
+        line = f"  {run_i}/{n_runs} runs  (current: {run}){tail}"
         sys.stdout.write("\r" + line.ljust(status_width))
         sys.stdout.flush()
 
@@ -386,6 +408,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             data_file = rel_path.as_posix()
             cancer_type = rel_path.parent.name if len(rel_path.parts) >= 2 else ""
             fasta_dir = fasta_root / study_name
+            seq_output_dir = output_path.parent / rel_path.parent / study_name
+            seq_output_dir.mkdir(parents=True, exist_ok=True)
 
             with open(csv_path, newline="") as in_f:
                 reader = csv.DictReader(in_f)
@@ -398,13 +422,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 and row_is_sample_used(row)
             )
             progress_total = 1 if first_run_per_study else n_runs
-            study_banner = (
-                f"Study {study_name} ({data_file}): {n_runs} runs "
-                f"(SRA accessions, sample_used=TRUE)"
-            )
-            if first_run_per_study:
-                study_banner += " (processing first run only)"
-            print(study_banner, flush=True)
+            print(f"Study data from {data_file}: {n_runs} runs", flush=True)
 
             study_written = 0
             study_missing = 0
@@ -420,7 +438,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     continue
 
                 run_i += 1
-                show_run_progress(study_name, run_i, progress_total, run)
+                show_run_progress(run_i, progress_total, run)
 
                 fasta_gz = fasta_dir / f"{run}.fasta.gz"
                 if not fasta_gz.is_file():
@@ -431,21 +449,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     )
                     rows_missing_fasta += 1
                     study_missing += 1
-                    show_run_progress(
-                        study_name, run_i, progress_total, run, "skipped: no FASTA"
-                    )
+                    show_run_progress(run_i, progress_total, run, "skipped: no FASTA")
                     if first_run_per_study:
                         break
                     continue
 
                 if profile_mode:
-                    counts, err, run_profile = tetramer_percentages_for_run_profiled(
-                        fasta_gz
+                    counts, sequence_rows, err, run_profile = (
+                        tetramer_counts_for_run_and_sequences_profiled(fasta_gz)
                     )
                     study_profile += run_profile
                     total_profile += run_profile
                 else:
-                    counts, err = tetramer_percentages_for_run(fasta_gz)
+                    counts, sequence_rows, err = tetramer_counts_for_run_and_sequences(
+                        fasta_gz
+                    )
                 if err:
                     print(
                         f"Warning: could not read {fasta_gz}: {err}",
@@ -453,12 +471,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     )
                     rows_missing_fasta += 1
                     study_missing += 1
-                    show_run_progress(
-                        study_name, run_i, progress_total, run, "skipped: read error"
-                    )
+                    show_run_progress(run_i, progress_total, run, "skipped: read error")
                     if first_run_per_study:
                         break
                     continue
+
+                run_seq_output_path = seq_output_dir / f"{run}.csv"
+                with open(run_seq_output_path, "w", newline="") as run_out_f:
+                    csv.writer(run_out_f).writerows(sequence_rows)
 
                 if sum(counts) == 0:
                     rows_zero_kmers += 1
@@ -480,14 +500,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 writer.writerow(out_row)
                 rows_written += 1
                 study_written += 1
-                show_run_progress(study_name, run_i, progress_total, run, "wrote row")
+                show_run_progress(run_i, progress_total, run, "wrote row")
                 if first_run_per_study:
                     break
 
             sys.stdout.write("\n")
             sys.stdout.flush()
             print(
-                f"  Finished {study_name}: wrote {study_written}, "
+                f"  Finished: wrote {study_written}, "
                 f"skipped (missing/unreadable FASTA) {study_missing}, "
                 f"zero tetranucleotide counts {study_zero}",
                 flush=True,
@@ -497,7 +517,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 io_pct = (100.0 * study_profile.io_parse_sec / total_sec) if total_sec else 0.0
                 count_pct = (100.0 * study_profile.count_sec / total_sec) if total_sec else 0.0
                 print(
-                    f"    Profile {study_name}: io+parse {study_profile.io_parse_sec:.3f}s "
+                    f"    Profile: io+parse {study_profile.io_parse_sec:.3f}s "
                     f"({io_pct:.1f}%), count {study_profile.count_sec:.3f}s "
                     f"({count_pct:.1f}%), total {total_sec:.3f}s",
                     flush=True,
