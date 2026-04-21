@@ -24,12 +24,16 @@ We trained a K-nearest neighbors classifier on the 256 frequency features. We ap
 
 ### Classification using cluster abundance profiles
 
-16S rRNA gene sequences from [N] sequencing runs across eight studies (four breast cancer, four colorectal cancer, and matched normal controls) were analyzed using a reference-free, alignment-free approach that avoids taxonomic classification.
-For each sequence, a 256-dimensional feature vector was computed from the frequencies of all possible tetranucleotide (4-mer) motifs. Because the resulting feature space is high-dimensional and correlated, principal component analysis (PCA) was applied to the pooled 4-mer frequency matrix to reduce dimensionality, retaining components explaining [X]% of cumulative variance.
-A representative subset of sequences was then used to train an unsupervised clustering model (k-means, k=[K]) in the reduced PCA space, yielding K cluster centroids that define a sequence "codebook." Each cluster can be interpreted as a group of sequences sharing similar nucleotide composition, analogous to compositional operational taxonomic units (OTUs), but derived entirely from sequence statistics rather than reference databases or sequence alignment.
+Run-level tetranucleotide features summarize each sample with a single average profile and therefore do not directly capture how different sequence types are distributed within a run.
+To preserve this within-run compositional structure, we used unsupervised clustering followed by cluster abundance profiles (UC/CAP), a reference-free and alignment-free approach.
 
-To generate run-level features, all sequences in each sequencing run were assigned to their nearest cluster centroid, and the resulting cluster membership counts were normalized to relative abundances (i.e., divided by the total number of sequences per run). This produced a K-dimensional **cluster abundance profile** for each run. These profiles served as the feature matrix for supervised classification, distinguishing cancer from normal samples and breast from colorectal cancer, using [classifier, e.g., random forest / regularized logistic regression / SVM].
-This approach captures compositional heterogeneity at the individual sequence level rather than averaging tetranucleotide frequencies across entire runs, preserving information about the distribution of distinct sequence types within each sample.
+Because the sequence-level table is large, we first fit the unsupervised clustering model on a bounded subset of sequences from each run (`n_uc`).
+For each sequence, we computed a 256-dimensional tetranucleotide composition vector, then applied principal component analysis (PCA) and retained components that explained 95% of cumulative variance.
+We then fit k-means in this reduced space to obtain K centroids that define a sequence codebook.
+
+To construct run-level features, we assigned a larger subset of sequences per run (`n_cap`) to the learned centroids in the same transformed feature space.
+We counted cluster memberships within each run and normalized by the number of assigned sequences, yielding a K-dimensional cluster abundance profile for each run.
+These CAP vectors were then used as the feature matrix for supervised classification for both binary tasks (cancer versus healthy and breast versus colorectal), with the downstream classifier selected separately.
 
 ## Results
 

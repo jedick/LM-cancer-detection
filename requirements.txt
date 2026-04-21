@@ -7,3 +7,7 @@ numba>=0.59.0
 
 # scripts/fit_tetranucleotide_classifier.py
 scikit-learn>=1.3.0
+
+# scripts/build_uc_cap_sequence_cache.py
+pandas>=2.0.0
+pyarrow>=14.0.0

@@ -42,4 +42,8 @@ We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` 
 ## Unsupervised Clustering with Cluster Abundance Profiling
 
 This stage takes the sequence-level tetranucleotide count files described above.
-Further documentation of the clustering and abundance profiling workflow will be added as that part of the pipeline is implemented.
+
+- `scripts/build_uc_cap_sequence_cache.py` builds a cached sequence-level tetranucleotide table for UC/CAP exploration.
+  Running it with default arguments keeps only the first 1024 rows from each run file and saves the result in a Parquet table under `outputs/uc_cap`.
+- `scripts/run_uc_cap_pipeline.py` performs unsupervised clustering on a subset of cached rows (`n_uc`) and then assigns a larger subset of sequences (`n_cap`) to the learned cluster centroids, producing run-level cluster abundance profiles.
+  Its main output is `outputs/uc_cap/cap_features_*.csv`, where each row is a sequencing run and the `cluster_*` columns are normalized per-run abundances used as features for downstream classification.
