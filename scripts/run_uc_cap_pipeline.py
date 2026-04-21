@@ -32,6 +32,7 @@ import pyarrow.dataset as ds
 import pyarrow.compute as pc
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import PCA
+from shared_splits import stratified_split_70_10_20
 
 
 RUN_FILE_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
@@ -257,6 +258,27 @@ def load_run_metadata(path: Path) -> Optional[pd.DataFrame]:
     return meta.drop_duplicates(subset=["study_name", "Run"])
 
 
+def build_run_split_map(
+    metadata: pd.DataFrame,
+    random_state: int,
+) -> Dict[str, str]:
+    run_ids = metadata["Run"].to_numpy(dtype=object)
+    labels = metadata["sample_label"].to_numpy(dtype=object)
+    runs_train, runs_val, runs_test, _, _, _ = stratified_split_70_10_20(
+        run_ids,
+        labels,
+        random_state=random_state,
+    )
+    split_map: Dict[str, str] = {}
+    for run in runs_train:
+        split_map[str(run)] = "train"
+    for run in runs_val:
+        split_map[str(run)] = "val"
+    for run in runs_test:
+        split_map[str(run)] = "test"
+    return split_map
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -392,6 +414,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit("No sequence rows found in cache for requested settings.")
     if len(cache_df.columns) != 259:
         raise SystemExit("Cache schema mismatch: expected 259 columns.")
+    metadata = load_run_metadata(args.run_metadata_csv)
+    if metadata is None:
+        raise SystemExit(
+            f"Run metadata CSV required for shared splits not found: {args.run_metadata_csv}"
+        )
+    run_split_map = build_run_split_map(metadata, args.random_state)
+    train_runs = {run for run, split in run_split_map.items() if split == "train"}
 
     uc_dir = args.out_dir / f"uc{args.n_uc}_k{args.n_clusters}"
     uc_dir.mkdir(parents=True, exist_ok=True)
@@ -405,6 +434,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             model_payload = pickle.load(f)
         km = model_payload["kmeans"]
         pca = model_payload["pca"]
+        saved_train_runs = model_payload.get("split_train_runs")
+        if saved_train_runs is None:
+            raise SystemExit(
+                "Existing UC model was fit without shared train-only runs. "
+                "Use --refit-uc to rebuild."
+            )
+        if set(saved_train_runs) != train_runs:
+            raise SystemExit(
+                "Existing UC model train split does not match current shared split. "
+                "Use --refit-uc to rebuild."
+            )
         saved_transform = model_payload.get("transform", {})
         if (
             saved_transform.get("normalize") != transform.normalize
@@ -416,11 +456,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         uc_df = pd.read_csv(uc_assign_out)
     else:
-        uc_df = cache_df[cache_df["sequence_index"] <= args.n_uc]
+        uc_df = cache_df[
+            (cache_df["sequence_index"] <= args.n_uc) & (cache_df["Run"].isin(train_runs))
+        ]
         if uc_df.empty:
-            raise SystemExit(f"No UC rows found for --n-uc={args.n_uc}")
+            raise SystemExit(
+                f"No UC rows found for training runs with --n-uc={args.n_uc}"
+            )
         print(
-            f"UC fit set: {len(uc_df)} sequences, {uc_df[['study_name', 'Run']].drop_duplicates().shape[0]} runs",
+            f"UC fit set (train runs only): {len(uc_df)} sequences, "
+            f"{uc_df[['study_name', 'Run']].drop_duplicates().shape[0]} runs",
             flush=True,
         )
         km, pca, uc_labels = fit_uc_model(
@@ -445,6 +490,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         "normalize": transform.normalize,
                         "log1p": transform.log1p,
                     },
+                    "split_train_runs": sorted(train_runs),
                     "tetramers": list(TETRAMERS),
                 },
                 f,
@@ -480,9 +526,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cap_transform=args.cap_transform,
         clr_pseudocount=args.clr_pseudocount,
     )
-    metadata = load_run_metadata(args.run_metadata_csv)
-    if metadata is not None:
-        cap_df = cap_df.merge(metadata, on=["study_name", "Run"], how="left")
+    cap_df = cap_df.merge(metadata, on=["study_name", "Run"], how="left")
+    cap_df["split"] = cap_df["Run"].map(run_split_map).fillna("unsplit")
 
     cap_n_assigned_min = int(cap_df["n_assigned_sequences"].min())
     cap_n_assigned_max = int(cap_df["n_assigned_sequences"].max())
@@ -500,6 +545,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     config_out = uc_dir / f"{cap_name}.json"
 
     cap_df.to_csv(cap_out, index=False)
+    split_counts = cap_df["split"].value_counts().to_dict()
     with open(config_out, "w", encoding="utf-8") as f:
         json.dump(
             {
@@ -525,6 +571,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "uc_model_pkl": str(model_out),
                 "uc_unique_clusters": uc_unique_clusters,
                 "cap_runs": int(len(cap_df)),
+                "cap_split_counts": split_counts,
                 "cap_n_assigned_min": cap_n_assigned_min,
                 "cap_n_assigned_max": cap_n_assigned_max,
                 "cap_nonzero_clusters_mean": cap_nnz_mean,

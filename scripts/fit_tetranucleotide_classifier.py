@@ -31,10 +31,10 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
-from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from shared_splits import stratified_split_70_10_20
 
 # Lexicographic ACGT tetramers (256 columns), matching calculate_tetranucleotide_frequencies.py
 TETRAMERS: Tuple[str, ...] = tuple(
@@ -113,30 +113,6 @@ def _load_xy(
     if not xs:
         raise SystemExit("No data rows in CSV.")
     return np.asarray(xs, dtype=np.float64), np.asarray(ys)
-
-
-def _stratified_split_70_10_20(
-    X: np.ndarray,
-    y: np.ndarray,
-    random_state: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Stratified 70% / 10% / 20% train / val / test."""
-    X_tv, X_test, y_tv, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        stratify=y,
-        random_state=random_state,
-    )
-    val_fraction_of_tv = 0.1 / 0.8
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_tv,
-        y_tv,
-        test_size=val_fraction_of_tv,
-        stratify=y_tv,
-        random_state=random_state,
-    )
-    return X_train, X_val, X_test, y_train, y_val, y_test
 
 
 def _parse_csv_ints(s: str) -> List[int]:
@@ -467,7 +443,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Split once on original labels so both tasks share a consistent base partition.
     X_train_raw, X_val_raw, X_test_raw, y_train_raw, y_val_raw, y_test_raw = (
-        _stratified_split_70_10_20(X_raw, y_raw, random_state=args.random_state)
+        stratified_split_70_10_20(X_raw, y_raw, random_state=args.random_state)
     )
     X_train, y_train = _prepare_task_data(X_train_raw, y_train_raw, args.task)
     X_val, y_val = _prepare_task_data(X_val_raw, y_val_raw, args.task)
