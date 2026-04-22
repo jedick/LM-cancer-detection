@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""
+Train a classifier on UC/CAP run-level features.
+
+This script expects a CAP CSV produced by run_uc_cap_pipeline.py with:
+  - Run identifiers in column "Run"
+  - Labels in column "sample_label"
+  - Optional recorded split in column "split"
+  - Feature columns named "cluster_*"
+
+Train/val/test partitions are always derived from scripts/shared_splits.py.
+If the CSV contains a "split" column, it must exactly match the derived split
+for every run or the script exits with an error.
+
+Tasks:
+  - cancer_diagnosis: all samples, mapped to cancer vs healthy
+  - cancer_type: cancer-only samples, breast_cancer vs colorectal_cancer
+
+Models (default hyperparameters):
+  - random_forest
+  - logistic_regression
+  - svm
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Dict, Optional, Sequence, Tuple
+
+import numpy as np
+import pandas as pd
+from shared_splits import stratified_split_70_10_20
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.svm import SVC
+
+
+CANCER_LABELS: Tuple[str, str] = ("breast_cancer", "colorectal_cancer")
+
+
+def _load_cap_csv(csv_path: Path) -> pd.DataFrame:
+    if not csv_path.is_file():
+        raise SystemExit(f"CSV not found: {csv_path}")
+    df = pd.read_csv(csv_path)
+    if df.empty:
+        raise SystemExit("Input CSV has no data rows.")
+    required = {"Run", "sample_label"}
+    missing = sorted(required - set(df.columns))
+    if missing:
+        raise SystemExit(f"CSV missing required columns: {missing}")
+
+    feature_cols = [c for c in df.columns if c.startswith("cluster_")]
+    if not feature_cols:
+        raise SystemExit("CSV has no cluster feature columns (expected prefix 'cluster_').")
+
+    if df["Run"].isna().any():
+        raise SystemExit("Found empty Run values in CSV.")
+    if df["sample_label"].isna().any():
+        raise SystemExit("Found empty sample_label values in CSV.")
+    return df
+
+
+def _build_expected_split_map(
+    metadata_df: pd.DataFrame, random_state: int
+) -> Dict[str, str]:
+    run_meta = metadata_df.loc[:, ["Run", "sample_label"]].drop_duplicates(subset=["Run"])
+    duplicated = metadata_df.groupby("Run")["sample_label"].nunique()
+    bad_runs = duplicated[duplicated > 1].index.tolist()
+    if bad_runs:
+        raise SystemExit(
+            "A run has conflicting sample_label values in CSV. "
+            f"Example runs: {bad_runs[:5]}"
+        )
+    runs = run_meta["Run"].astype(str).to_numpy(dtype=object)
+    labels = run_meta["sample_label"].astype(str).to_numpy(dtype=object)
+    runs_train, runs_val, runs_test, _, _, _ = stratified_split_70_10_20(
+        runs, labels, random_state=random_state
+    )
+    out: Dict[str, str] = {}
+    for run in runs_train:
+        out[str(run)] = "train"
+    for run in runs_val:
+        out[str(run)] = "val"
+    for run in runs_test:
+        out[str(run)] = "test"
+    return out
+
+
+def _load_split_metadata(path: Path) -> pd.DataFrame:
+    if not path.is_file():
+        raise SystemExit(f"Run metadata CSV not found: {path}")
+    meta = pd.read_csv(path, usecols=["Run", "sample_label"])
+    if meta.empty:
+        raise SystemExit(f"Run metadata CSV has no rows: {path}")
+    if meta["Run"].isna().any() or meta["sample_label"].isna().any():
+        raise SystemExit("Run metadata CSV has empty Run/sample_label values.")
+    return meta
+
+
+def _validate_csv_splits(df: pd.DataFrame, expected: Dict[str, str]) -> None:
+    if "split" not in df.columns:
+        return
+    run_split_unique = df.loc[:, ["Run", "split"]].drop_duplicates()
+    split_counts = run_split_unique.groupby("Run")["split"].nunique()
+    bad = split_counts[split_counts > 1].index.tolist()
+    if bad:
+        raise SystemExit(
+            "A run has multiple split values in CSV. "
+            f"Example runs: {bad[:5]}"
+        )
+
+    mismatches = []
+    for _, row in run_split_unique.iterrows():
+        run = str(row["Run"])
+        observed = str(row["split"]).strip()
+        expected_split = expected.get(run)
+        if expected_split is None:
+            mismatches.append((run, observed, "missing_in_expected"))
+            continue
+        if observed != expected_split:
+            mismatches.append((run, observed, expected_split))
+    if mismatches:
+        msg = ", ".join(
+            [f"{run}: csv={obs}, expected={exp}" for run, obs, exp in mismatches[:10]]
+        )
+        raise SystemExit(
+            "CSV split column does not match shared_splits.py-derived splits. "
+            f"First mismatches: {msg}"
+        )
+
+
+def _prepare_task(df: pd.DataFrame, task: str) -> pd.DataFrame:
+    out = df.copy()
+    if task == "cancer_diagnosis":
+        out["task_label"] = np.where(
+            out["sample_label"].isin(CANCER_LABELS), "cancer", "healthy"
+        )
+        return out
+    if task == "cancer_type":
+        out = out[out["sample_label"].isin(CANCER_LABELS)].copy()
+        if out.empty:
+            raise SystemExit("Task cancer_type selected, but no cancer samples were found.")
+        out["task_label"] = out["sample_label"].astype(str)
+        return out
+    raise SystemExit(f"Unknown task: {task}")
+
+
+def _require_binary(y: np.ndarray, split_name: str, task: str) -> None:
+    classes = np.unique(y)
+    if classes.size != 2:
+        raise SystemExit(
+            f"Task {task!r} requires 2 classes in {split_name}; got {classes.tolist()}."
+        )
+
+
+def _build_model(name: str, random_state: int):
+    if name == "random_forest":
+        return RandomForestClassifier(random_state=random_state)
+    if name == "logistic_regression":
+        return LogisticRegression()
+    if name == "svm":
+        return SVC()
+    raise SystemExit(f"Unknown classifier: {name}")
+
+
+def _binary_roc_auc(clf, X_test: np.ndarray, y_test: np.ndarray) -> float:
+    if hasattr(clf, "predict_proba"):
+        y_score = clf.predict_proba(X_test)[:, 1]
+    elif hasattr(clf, "decision_function"):
+        y_score = clf.decision_function(X_test)
+    else:
+        return float("nan")
+    try:
+        return float(roc_auc_score(y_test, y_score))
+    except ValueError:
+        return float("nan")
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    root = Path(__file__).resolve().parent.parent
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--csv",
+        type=Path,
+        default=root / "outputs" / "uc_cap" / "uc10_k100" / "cap100.csv",
+        help="Input CAP feature CSV.",
+    )
+    parser.add_argument(
+        "--task",
+        choices=("cancer_diagnosis", "cancer_type"),
+        required=True,
+        help="Classification task.",
+    )
+    parser.add_argument(
+        "--classifier",
+        choices=("random_forest", "logistic_regression", "svm"),
+        required=True,
+        help="Classifier family with default hyperparameters.",
+    )
+    parser.add_argument(
+        "--random-state",
+        type=int,
+        default=0,
+        help="Random state used for shared split generation.",
+    )
+    parser.add_argument(
+        "--run-metadata-csv",
+        type=Path,
+        default=root / "outputs" / "tetranucleotide_frequencies.csv",
+        help="Metadata CSV used to derive shared splits (must include Run,sample_label).",
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    df = _load_cap_csv(args.csv)
+    split_meta_df = _load_split_metadata(args.run_metadata_csv)
+    expected_split_map = _build_expected_split_map(
+        split_meta_df, random_state=args.random_state
+    )
+    _validate_csv_splits(df, expected_split_map)
+
+    df = df.copy()
+    df["Run"] = df["Run"].astype(str)
+    df["split_from_shared"] = df["Run"].map(expected_split_map)
+    if df["split_from_shared"].isna().any():
+        raise SystemExit("Some runs in CSV were not assigned by shared split logic.")
+
+    task_df = _prepare_task(df, args.task)
+    feature_cols = [c for c in task_df.columns if c.startswith("cluster_")]
+
+    train_df = task_df[task_df["split_from_shared"] == "train"]
+    val_df = task_df[task_df["split_from_shared"] == "val"]
+    test_df = task_df[task_df["split_from_shared"] == "test"]
+    if train_df.empty or val_df.empty or test_df.empty:
+        raise SystemExit("One or more splits are empty after task filtering.")
+
+    X_train = train_df.loc[:, feature_cols].to_numpy(dtype=np.float64, copy=False)
+    y_train = train_df["task_label"].to_numpy(dtype=object)
+    X_val = val_df.loc[:, feature_cols].to_numpy(dtype=np.float64, copy=False)
+    y_val = val_df["task_label"].to_numpy(dtype=object)
+    X_test = test_df.loc[:, feature_cols].to_numpy(dtype=np.float64, copy=False)
+    y_test = test_df["task_label"].to_numpy(dtype=object)
+
+    _require_binary(y_train, "train split", args.task)
+    _require_binary(y_val, "validation split", args.task)
+    _require_binary(y_test, "test split", args.task)
+
+    label_order = np.unique(y_train)
+    label_to_int = {lab: i for i, lab in enumerate(label_order)}
+    y_train_i = np.asarray([label_to_int[v] for v in y_train], dtype=np.int64)
+    y_val_i = np.asarray([label_to_int[v] for v in y_val], dtype=np.int64)
+    y_test_i = np.asarray([label_to_int[v] for v in y_test], dtype=np.int64)
+
+    clf = _build_model(args.classifier, random_state=args.random_state)
+    clf.fit(X_train, y_train_i)
+
+    val_pred = clf.predict(X_val)
+    test_pred = clf.predict(X_test)
+    val_acc = float(accuracy_score(y_val_i, val_pred))
+    test_acc = float(accuracy_score(y_test_i, test_pred))
+    test_auc = _binary_roc_auc(clf, X_test, y_test_i)
+    auc_str = f"{test_auc:.6f}" if np.isfinite(test_auc) else "nan"
+
+    print(f"CSV: {args.csv}", flush=True)
+    print(f"Task: {args.task}", flush=True)
+    print(f"Classifier: {args.classifier}", flush=True)
+    print(f"Features: {len(feature_cols)}", flush=True)
+    print(
+        f"Split sizes - train: {len(train_df)}, val: {len(val_df)}, test: {len(test_df)}",
+        flush=True,
+    )
+    print(f"Classes (encoded): {label_to_int}", flush=True)
+    print(f"Validation accuracy: {val_acc:.6f}", flush=True)
+    print(f"Test accuracy: {test_acc:.6f}", flush=True)
+    print(f"Test ROC AUC: {auc_str}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

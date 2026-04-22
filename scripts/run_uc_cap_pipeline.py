@@ -285,7 +285,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--cache-parquet",
         type=Path,
-        default=root / "outputs" / "uc_cap" / "sequence_counts_first_1024_all_runs.parquet",
+        default=root / "outputs" / "uc_cap" / "sequence_counts_first_10000_all_runs.parquet",
         help="Cache Parquet with sequence-level tetranucleotide counts.",
     )
     parser.add_argument(
