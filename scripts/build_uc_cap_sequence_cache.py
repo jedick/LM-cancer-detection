@@ -12,7 +12,7 @@ Writes one Parquet file containing:
   - sequence_index (1-based row index within the source run file)
   - 256 tetranucleotide count columns (AAAA ... TTTT, lexicographic ACGT order)
 
-The script keeps only the first N rows from each run file (default: 1024).
+The script keeps only the first N rows from each run file (default: 10000).
 """
 
 from __future__ import annotations
@@ -64,14 +64,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=None,
         help=(
             "Output Parquet path (default: <repo>/outputs/uc_cap/"
-            "sequence_counts_first_1024_all_runs.parquet)."
+            "sequence_counts_first_10000_all_runs.parquet)."
         ),
     )
     parser.add_argument(
         "--n-max",
         type=int,
-        default=1024,
-        help="Maximum number of sequences to keep per Run (default: 1024).",
+        default=10000,
+        help="Maximum number of sequences to keep per Run (default: 10000).",
     )
     parser.add_argument(
         "--input-suffix",
@@ -99,7 +99,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     repo_root = script_dir.parent
     outputs_dir = args.outputs_dir or (repo_root / "outputs")
     output_path = args.output or (
-        outputs_dir / "uc_cap" / "sequence_counts_first_1024_all_runs.parquet"
+        outputs_dir / "uc_cap" / "sequence_counts_first_10000_all_runs.parquet"
     )
     parquet_compression = None if args.compression == "none" else args.compression
 
