@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Run the UC-CAP pipeline for different parameter combinations
+# Run the UC/CAP pipeline for different parameter combinations
 # 20260421 jmd
 
 #python run_uc_cap_pipeline.py --n-uc 500 --n-clusters 1000 --n-cap 2000

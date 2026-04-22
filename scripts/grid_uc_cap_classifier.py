@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Run UC-CAP classifier grid and write markdown result tables.
+"""Run UC/CAP classifier grid and write markdown result tables.
 
-For each UC-CAP parameter combination from scripts/run_uc_cap_pipeline.sh:
+For each UC/CAP parameter combination from scripts/run_uc_cap_pipeline.sh:
   - n_uc in {1000, 2000}
   - K in {2000, 5000}
   - n_cap in {5000, 10000}
@@ -141,7 +141,7 @@ def run_one(
 
 def markdown_table(task: str, combos: List[Combo], values: Dict[Tuple[Combo, str], str]) -> str:
     lines = [
-        f"# UC-CAP {task}",
+        f"# UC/CAP {task}",
         "",
         "| n_uc | K | n_cap | random_forest | logistic_regression | svm |",
         "| ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -164,7 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     combos = [Combo(*triple) for triple in GRID]
     for combo in combos:
         if not combo.csv_path.is_file():
-            raise SystemExit(f"Missing UC-CAP feature CSV: {combo.csv_path}")
+            raise SystemExit(f"Missing UC/CAP feature CSV: {combo.csv_path}")
     if not args.classifier_script.is_file():
         raise SystemExit(f"Classifier script not found: {args.classifier_script}")
     if not args.run_metadata_csv.is_file():

@@ -1,6 +1,23 @@
-*Cancer detection from gut microbiomes using a DNA language model*
+# Cancer detection from gut microbiomes using a DNA language model
 
-Goal: to implement a cancer prediction and classification pipeline using 16S rRNA gene sequences from fecal samples.
+**Goal:** Implement a cancer prediction and classification pipeline using 16S rRNA gene sequences from fecal samples.
+
+**Tasks:** Cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
+
+## Study design
+
+**Stage 1** uses 16S rRNA sequences from eight studies (four breast cancer, four colorectal cancer). All eight studies contribute to model fitting and testing via in-study train/test splits. In-study test sets will yield optimistic AUC estimates, as the model has seen sequences from the same study during training.
+
+**Stage 2** addresses this by validating on four held-out studies (two breast, two colorectal) not seen during training. AUC values are expected to drop substantially for all models. *The central research question is whether the language model generalizes better across studies than classical approaches.*
+
+## Methods
+
+**Feature engineering**
+
+- *Run-averaged tetranucleotide profiles:* 4-mer counts are summed across all sequences in a run and converted to percentages. This collapses within-run sequence heterogeneity into a single 256-dimensional vector per run.
+- *Sequence-level cluster abundance profiles (UC/CAP):* Sequences are individually characterized by their 4-mer composition, clustered unsupervised, and each run is then represented by the distribution of its sequences across clusters. This preserves within-run compositional structure that flat aggregation discards.
+
+**Classical ML models:** KNN, random forest, logistic regression, SVM
 
 ## Sample data, labeling, and exclusion
 
@@ -19,33 +36,44 @@ The `benign` category contains adenomas and benign colon polyps and breast ducta
 The `sample_used` column is a Boolean that indicates whether samples are used for training.
 Samples labeled as `benign` and non-fecal samples in some studies are excluded from training.
 
-## Downloading data
+## Script overview
 
 Install script dependencies from the repository root: `pip install -r requirements.txt`.
 
-Use `scripts/download_sra_data.py` to download the 16S rRNA gene sequence data from SRA.
-The gzipped sequence files are stored under `fasta/` in a separate directory for each study.
+Start with `scripts/download_sra_data.py` to download the 16S rRNA gene sequence data from SRA and save the gz files under `fasta/`.
+See the table for an overview of all the steps and read below for details.
 
-## Tetranucleotide frequencies
+| Step | Script | Inputs | Outputs |
+|-----|--------|--------|--------|
+| 1. Download | download_sra_data.py | data/**/*.csv | fasta/<study>/<Run>.fasta.gz |
+| 2. Tetramer counts | calculate_tetranucleotide_frequencies.py | fasta/... | outputs/tetranucleotide_frequencies.csv, outputs/<cancer>/<study>/<Run>.csv |
+| 3. Sequence cache | build_uc_cap_sequence_cache.py | outputs/<cancer>/... | outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet |
+| 4. Tetramer classifier | fit_tetranucleotide_classifier.py | outputs/tetranucleotide_frequencies.csv | results/*_results.txt |
+| 5. UC/CAP pipeline | run_uc_cap_pipeline.py | outputs/uc_cap/*.parquet | outputs/uc_cap/uc{n}_k{k}/cap{n}.csv |
+| 6. UC/CAP grid | grid_uc_cap_pipeline.sh + grid_uc_cap_classifier.py | outputs/uc_cap/... | results/uc_cap_*.md |
 
-Use `scripts/calculate_tetranucleotide_frequencies.py` to build tetranucleotide (4-mer) profiles from the downloaded FASTA files.
+## Details
+
+### Tetranucleotide frequencies
+
+`calculate_tetranucleotide_frequencies.py` builds tetranucleotide (4-mer) profiles from the downloaded FASTA files.
 The script only processes rows with `sample_used=TRUE` in the CSV files under `data/`.
 It writes two outputs from the same pass: `outputs/tetranucleotide_frequencies.csv` has one row per run with labels plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
 The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv` hold **raw integer** 4-mer counts per sequence for Unsupervised Clustering with Cluster Abundance Profiling (see below); each file has one row per FASTA sequence in encounter order, 256 columns with no header row, in the same lexicographic ACGT 4-mer order as the 256 feature columns in `outputs/tetranucleotide_frequencies.csv`.
 
-## Run-level tetranucleotide classifier
+### Run-level tetranucleotide classifier
 
-Use `scripts/fit_tetranucleotide_classifier.py` to fit a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
+`fit_tetranucleotide_classifier.py` fits a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
 The script supports two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
 We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `results/`.
 
-## Unsupervised Clustering with Cluster Abundance Profiling
+### Unsupervised Clustering with Cluster Abundance Profiling
 
 This stage takes the sequence-level tetranucleotide count files described above.
 
-- `scripts/build_uc_cap_sequence_cache.py` builds a cached sequence-level tetranucleotide table for UC-CAP exploration.
+- `build_uc_cap_sequence_cache.py` builds a cached sequence-level tetranucleotide table for UC/CAP exploration.
   Running it with default arguments keeps only the first 5000 rows from each run file and saves the result in a Parquet table under `outputs/uc_cap`.
-- `scripts/run_uc_cap_pipeline.py` performs unsupervised clustering on a subset of cached rows (`n_uc`) and then assigns a larger subset of sequences (`n_cap`) to the learned cluster centroids, producing run-level cluster abundance profiles.
+- `run_uc_cap_pipeline.py` performs unsupervised clustering on a subset of cached rows (`n_uc`) and then assigns a larger subset of sequences (`n_cap`) to the learned cluster centroids, producing run-level cluster abundance profiles.
   Its main output is `outputs/uc_cap/cap_features_*.csv`, where each row is a sequencing run and the `cluster_*` columns are normalized per-run abundances used as features for downstream classification.
-- `scripts/fit_uc_cap_classifier.py` uses the features generated by the pipeline to fit classification models.
-- `scripts/grid_uc_cap_pipeline.sh` runs the pipeline for different combinations of parameters. Then `scripts/grid_uc_cap_classifier.py` uses the features generated by the pipeline to run the classifier with different models for the two tasks.
+- `fit_uc_cap_classifier.py` uses the features generated by the pipeline to fit classification models.
+- `grid_uc_cap_pipeline.sh` runs the pipeline for different combinations of parameters. Then `grid_uc_cap_classifier.py` uses the features generated by the pipeline to run the classifier with different models for the two tasks.
