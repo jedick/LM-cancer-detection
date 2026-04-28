@@ -14,3 +14,6 @@ scikit-learn==1.8.0
 # scripts/build_uc_cap_sequence_cache.py
 pandas>=2.0.0
 pyarrow>=14.0.0
+
+# scripts/pipeline_emit_mk.py, scripts/grid_uc_cap_pipeline.py, Makefile YAML config loading
+PyYAML>=6.0

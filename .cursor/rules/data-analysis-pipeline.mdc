@@ -1,0 +1,31 @@
+---
+description: Data analysis pipeline conventions (SRA/FASTA layout, Makefile+YAML source of truth, long-job progress)
+alwaysApply: true
+---
+
+# Data analysis pipeline conventions
+
+## Source of truth and execution entrypoint
+
+- Treat **`configs/pipeline.yaml`** as the source of truth for pipeline paths and default parameters.
+- Prefer running pipeline steps via **`Makefile` targets** (`download_data`, `tetramer_frequencies`, `sequence_cache`, `fit_knn`, `fit_uc_cap`, `grid_uc_cap`) instead of ad hoc script commands in docs and guidance.
+- Avoid hardcoding pipeline paths/defaults in multiple places; when a path/parameter changes in `configs/pipeline.yaml`, update Makefile wiring and README pipeline references in the same change.
+
+## Sample identity and FASTA files
+
+- Treat the **`Run` column** (NCBI SRA accession: `SRR*`, `ERR*`, `DRR*`) as the **sample ID**: one CSV row with a valid `Run` is one sequencing sample.
+- **FASTA filenames** use that accession as the base name: `{Run}.fasta.gz` (for example `SRR5894020.fasta.gz`).
+- **Layout** matches `scripts/download_sra_data.py`: for a data CSV whose filename stem is `<study_name>`, files live under `fasta/<study_name>/` at the repo root (e.g. `fasta/AAM+13/SRR5894020.fasta.gz`). Scripts that read sequences should resolve paths the same way.
+
+## Pipeline artifact conventions
+
+- Per-run sequence count files for UC/CAP use **`.csv.xz`** under `outputs/<cancer_type>/<study_name>/<Run>.csv.xz`.
+- Scratch experiment JSON outputs are written under **`results/scratch/`** (gitignored); finalized artifacts are manually selected/copied into version-controlled `results/...`.
+
+## `fasta/` directory and runtime
+
+- In this project, **`fasta` may be a symlink** to a large external directory (e.g. a shared sequence store). A **full pass over every run** can take a **long time** because processing must **read every base** in each **gzip FASTA** (I/O and decompression bound). Do not assume “small repo” timings for batch scripts over all runs.
+
+## Long-running scripts
+
+- Any script that **iterates over many runs or large FASTAs** should expose **visible progress** (e.g. current study, run index / total, optional ETA or per-study summary); print a **newline** before unrelated output so progress lines do not corrupt the terminal.

@@ -25,6 +25,9 @@ Models (default hyperparameters):
 from __future__ import annotations
 
 import argparse
+import json
+import math
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
 
@@ -38,6 +41,25 @@ from sklearn.svm import SVC
 
 
 CANCER_LABELS: Tuple[str, str] = ("breast_cancer", "colorectal_cancer")
+
+
+def _float_for_json(x: float) -> Optional[float]:
+    if not math.isfinite(x):
+        return None
+    return float(x)
+
+
+def _results_json_out_path(
+    repo_root: Path, raw: Optional[str], *, task: str, classifier: str
+) -> Optional[Path]:
+    if raw is None:
+        return None
+    if raw == "":
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stem = Path(__file__).stem
+        name = f"{stem}_{task}_{classifier}_{ts}.json"
+        return repo_root / "results" / "scratch" / name
+    return Path(raw).expanduser()
 
 
 def _load_cap_csv(csv_path: Path) -> pd.DataFrame:
@@ -184,7 +206,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--csv",
         type=Path,
-        default=root / "outputs" / "uc_cap" / "uc10_k100" / "cap100.csv",
+        default=root / "outputs" / "uc_cap" / "uc1000_k5000" / "cap10000.csv",
         help="Input CAP feature CSV.",
     )
     parser.add_argument(
@@ -211,7 +233,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=root / "outputs" / "tetranucleotide_frequencies.csv",
         help="Metadata CSV used to derive shared splits (must include Run,sample_label).",
     )
+    parser.add_argument(
+        "--results-json",
+        type=str,
+        nargs="?",
+        const="",
+        default=None,
+        help=(
+            "Write run metadata and metrics (script, timestamp, task, model, config, "
+            "test ROC AUC, validation score) to a JSON file after normal output. "
+            "With no path, writes under <repo>/results/scratch/ with an auto-generated name. "
+            "Omit the option entirely to skip writing."
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
+    results_json_path = _results_json_out_path(
+        root, args.results_json, task=args.task, classifier=args.classifier
+    )
 
     df = _load_cap_csv(args.csv)
     split_meta_df = _load_split_metadata(args.run_metadata_csv)
@@ -274,6 +312,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Validation accuracy: {val_acc:.6f}", flush=True)
     print(f"Test accuracy: {test_acc:.6f}", flush=True)
     print(f"Test ROC AUC: {auc_str}", flush=True)
+
+    if results_json_path is not None:
+        payload = {
+            "script": Path(__file__).name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "task": args.task,
+            "model": args.classifier,
+            "results_json": str(results_json_path.resolve()),
+            "config": {
+                "csv": str(args.csv.resolve()),
+                "random_state": args.random_state,
+                "run_metadata_csv": str(args.run_metadata_csv.resolve()),
+                "n_features": len(feature_cols),
+            },
+            "metrics": {
+                "test_roc_auc": _float_for_json(test_auc),
+                "validation_score": val_acc,
+                "validation_metric": "accuracy",
+            },
+        }
+        results_json_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(results_json_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+
     return 0
 
 

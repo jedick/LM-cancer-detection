@@ -23,6 +23,9 @@ from __future__ import annotations
 import argparse
 import csv
 import itertools
+import json
+import math
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -346,6 +349,25 @@ def _task_description(task: str) -> str:
     raise SystemExit(f"Unknown --task value: {task!r}")
 
 
+def _float_for_json(x: float) -> Optional[float]:
+    """JSON-serializable float; None for NaN/inf."""
+    if not math.isfinite(x):
+        return None
+    return float(x)
+
+
+def _results_json_out_path(repo_root: Path, raw: Optional[str], *, task: str) -> Optional[Path]:
+    """None = skip; empty str = auto path under results/scratch/."""
+    if raw is None:
+        return None
+    if raw == "":
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stem = Path(__file__).stem
+        name = f"{stem}_{task}_knn_{ts}.json"
+        return repo_root / "results" / "scratch" / name
+    return Path(raw).expanduser()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -421,7 +443,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="f1_weighted",
         help="Metric to maximize on the validation set when picking hyperparameters.",
     )
+    parser.add_argument(
+        "--results-json",
+        type=str,
+        nargs="?",
+        const="",
+        default=None,
+        help=(
+            "Write run metadata and metrics (script, timestamp, task, model, config, "
+            "test ROC AUC, validation score) to a JSON file after normal output. "
+            "With no path, writes under <repo>/results/scratch/ with an auto-generated name. "
+            "Omit the option entirely to skip writing."
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
+    results_json_path = _results_json_out_path(root, args.results_json, task=args.task)
     if args.clr_pseudocount <= 0:
         raise SystemExit("--clr-pseudocount must be positive.")
     if not 0.0 < args.pca_min_variance <= 1.0:
@@ -532,6 +568,46 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         strat.fit(X_train, y_train)
         s_auc = test_binary_roc_auc(y_test, strat.predict_proba(X_test), strat.classes_)
         print(f"  Stratified random: {_format_auc(s_auc)}", flush=True)
+
+    if results_json_path is not None:
+        config = {
+            "csv": str(csv_path.resolve()),
+            "label_column": label_column,
+            "task": args.task,
+            "random_state": args.random_state,
+            "no_scaler": args.no_scaler,
+            "no_clr": args.no_clr,
+            "clr_pseudocount": args.clr_pseudocount,
+            "pca_min_variance": args.pca_min_variance,
+            "baselines": args.baselines,
+            "n_neighbors": args.n_neighbors,
+            "weights": args.weights,
+            "scoring": args.scoring,
+            "pca_n_components_candidates": [int(x) for x in n_comp_grid],
+            "best_hyperparameters": {
+                "n_components": int(best_params["n_components"]),
+                "n_neighbors": int(best_params["n_neighbors"]),
+                "weights": str(best_params["weights"]),
+            },
+        }
+        payload = {
+            "script": Path(__file__).name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "task": args.task,
+            "model": "knn",
+            "results_json": str(results_json_path.resolve()),
+            "config": config,
+            "metrics": {
+                "test_roc_auc": _float_for_json(knn_auc),
+                "validation_score": float(best_val_score),
+                "validation_metric": args.scoring,
+            },
+        }
+        results_json_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(results_json_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+
     return 0
 
 

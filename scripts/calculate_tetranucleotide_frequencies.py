@@ -9,7 +9,7 @@ counts for the run, converts to percentages (rounded to 3 decimals), and writes
 outputs/tetranucleotide_frequencies.csv for ML training.
 
 Also writes per-run sequence-level 4-mer counts (256 integers per row, no header) to
-outputs/<cancer_type>/<study_name>/<Run>.csv for downstream clustering.
+outputs/<cancer_type>/<study_name>/<Run>.csv.xz for downstream clustering.
 
 Progress: prints each study data file and run count, updates a single-line counter
 while processing runs, then prints a short per-study summary.
@@ -30,6 +30,7 @@ import argparse
 import csv
 import gzip
 import itertools
+import lzma
 import re
 import sys
 import time
@@ -476,8 +477,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         break
                     continue
 
-                run_seq_output_path = seq_output_dir / f"{run}.csv"
-                with open(run_seq_output_path, "w", newline="") as run_out_f:
+                run_seq_output_path = seq_output_dir / f"{run}.csv.xz"
+                with lzma.open(run_seq_output_path, "wt", newline="") as run_out_f:
                     csv.writer(run_out_f).writerows(sequence_rows)
 
                 if sum(counts) == 0:
