@@ -27,6 +27,15 @@ temp_files: Set[Path] = set()
 interrupted = False
 
 
+def get_case_insensitive_field(row: dict, field_name: str) -> str:
+    """Return a CSV row field value by case-insensitive key match."""
+    target = field_name.lower()
+    for key, value in row.items():
+        if key.lower() == target:
+            return value or ""
+    return ""
+
+
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully by cleaning up temp files."""
     global interrupted
@@ -149,6 +158,7 @@ def main():
     # Statistics
     total_samples = 0
     skipped_pattern = 0
+    skipped_sample_used = 0
     skipped_existing = 0
     downloaded = 0
     failed = 0
@@ -176,6 +186,12 @@ def main():
             for row in rows:
                 if interrupted:
                     break
+
+                # Only process rows explicitly marked sample_used=true (case-insensitive).
+                sample_used = get_case_insensitive_field(row, "sample_used").strip()
+                if sample_used.lower() != "true":
+                    skipped_sample_used += 1
+                    continue
 
                 run = row.get("Run", "").strip()
 
@@ -212,6 +228,7 @@ def main():
         print(f"  Downloaded: {downloaded}")
         print(f"  Skipped (already exists): {skipped_existing}")
         print(f"  Failed: {failed}")
+        print(f"  Skipped (sample_used != true): {skipped_sample_used}")
         print(f"  Skipped (wrong pattern): {skipped_pattern}")
         print("=" * 60)
 

@@ -1,0 +1,13 @@
+study_name,study_year,cancer_type,n_cancer,n_healthy,ncbi_bioproject,partition,notes
+AAM+13,2013,breast,29,32,PRJNA396901,development,"Use only fecal samples (not sigmoid)"
+GHB+18,2018,breast,48,48,PRJNA383849,development,"Use only ""Pre"" samples (i.e. Unsorted by IgA)"
+BVW+21,2021,breast,403,442,PRJNA658160,development,"Labels: ""1)Invasive"" for cancer and ""not provided"" for control"
+WZK+22,2022,breast,54,25,PRJNA804967,development,
+ZZZ+22,2022,breast,14,14,PRJNA726050,holdout,
+SKC+23,2023,breast,22,21,PRJNA872152,holdout,
+BYZ+13,2013,colorectal,6,6,PRJNA222611,development,
+ZTV+14,2014,colorectal,41,75,PRJEB6070,development,
+BRRS16,2016,colorectal,127,134,PRJNA290926,development,
+YWS+21,2021,colorectal,53,52,PRJEB36789,development,"Labels: ""Healthy volunteer"" for control (not ""UK control"")"
+BRR+24,2024,colorectal,51,54,PRJEB71787,holdout,"Labels from Zenodo file"
+ARF+25,2025,colorectal,25,15,PRJEB76625,holdout,"Labels from SI"

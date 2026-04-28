@@ -33,8 +33,8 @@ The `benign` category contains adenomas and benign colon polyps and breast ducta
 `breast_cancer` includes invasive tumors and `colorectal_cancer` includes carcinoma.
 `healthy` includes the control samples in each study - these may be variously described as healthy or normal controls.
 
-The `sample_used` column is a Boolean that indicates whether samples are used for training.
-Samples labeled as `benign` and non-fecal samples in some studies are excluded from training.
+The `sample_used` column is a Boolean that indicates whether samples are used in the analysis.
+Samples labeled as `benign` and non-fecal samples in some studies are excluded from the analysis.
 
 ## Data analysis pipeline
 
@@ -43,6 +43,9 @@ Install script dependencies from the repository root: `pip install -r requiremen
 This project is organized as a Makefile-driven analysis pipeline. Paths and default
 parameters are stored in `configs/pipeline.yaml`, and `Makefile` defines targets
 that run the pipeline scripts with those configured settings.
+The `configs/datasets.csv` file identifies development and holdout studies in the
+`partition` column. Train/val/test splits are taken only from development studies,
+and metrics are calculated separately for test (development) and holdout studies.
 
 Start with `make download_data` to download the 16S rRNA gene sequence data from SRA and save the gz files under `fasta/`.
 See the table for an overview of all the steps and read below for details.
