@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Compute tetramer frequency profiles per sequencing run (Run).
+Compute tetramer frequency profiles per sequencing run (Run), incrementally.
 
 For each CSV row under data/ with sample_used=TRUE (case-insensitive), reads the
 matching gzip FASTA produced by download_sra_data.py (fasta/<study_name>/<Run>.fasta.gz),
 counts 4-mers in each FASTA sequence (no counting across sequence boundaries), sums
-counts for the run, converts to percentages (rounded to 3 decimals), and writes
-outputs/tetramer_frequencies.csv for ML training.
+counts for the run, converts to percentages (rounded to 3 decimals), and appends
+new rows to outputs/tetramer_frequencies.csv for ML training.
 
 Also writes per-run sequence-level 4-mer counts (256 integers per row, no header) to
-outputs/<cancer_type>/<study_name>/<Run>.csv.xz for downstream clustering.
+outputs/<cancer_type>/<study_name>/<Run>.csv.xz for downstream clustering, but only
+when the file does not already exist.
 
 Progress: prints each study data file and run count, updates a single-line counter
 while processing runs, then prints a short per-study summary.
@@ -31,6 +32,7 @@ import csv
 import gzip
 import itertools
 import lzma
+import os
 import re
 import sys
 import time
@@ -317,6 +319,54 @@ def percentages_from_counts(counts: Sequence[int]) -> List[float]:
     return [round(100.0 * c / total, 3) for c in counts]
 
 
+def open_lzma_text(path: Path, mode: str):
+    """
+    Open .xz in text mode using lzma-mt with all CPU cores when available.
+
+    Falls back to stdlib lzma if lzma-mt is not installed or does not support
+    the threads argument in this environment.
+    """
+    threads = max(1, os.cpu_count() or 1)
+    try:
+        import lzma_mt  # type: ignore[import-not-found]
+
+        return lzma_mt.open(path, mode, newline="", threads=threads)
+    except (ImportError, TypeError):
+        return lzma.open(path, mode, newline="")
+
+
+def load_existing_runs(output_path: Path) -> set[str]:
+    """Read existing Run IDs from output CSV; empty set when file is missing."""
+    if not output_path.is_file():
+        return set()
+    runs: set[str] = set()
+    with open(output_path, newline="") as in_f:
+        reader = csv.DictReader(in_f)
+        for row in reader:
+            run = (row.get("Run") or "").strip()
+            if run:
+                runs.add(run)
+    return runs
+
+
+def counts_from_sequence_rows(path: Path) -> Tuple[Optional[List[int]], Optional[str]]:
+    """Sum sequence-level 4-mer rows from an existing .csv.xz into run totals."""
+    totals = [0] * 256
+    try:
+        with open_lzma_text(path, "rt") as in_f:
+            reader = csv.reader(in_f)
+            for row in reader:
+                if not row:
+                    continue
+                if len(row) != 256:
+                    return None, f"expected 256 columns, got {len(row)}"
+                for i, value in enumerate(row):
+                    totals[i] += int(value)
+    except (OSError, ValueError) as exc:
+        return None, str(exc)
+    return totals, None
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -387,6 +437,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     fieldnames = label_fieldnames + feature_fieldnames
 
     rows_written = 0
+    rows_already_in_output = 0
+    run_seq_written = 0
+    run_seq_already_exists = 0
     rows_missing_fasta = 0
     rows_zero_kmers = 0
     total_profile = FastaPhaseTimings()
@@ -399,9 +452,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stdout.write("\r" + line.ljust(status_width))
         sys.stdout.flush()
 
-    with open(output_path, "w", newline="") as out_f:
+    existing_runs = load_existing_runs(output_path)
+    output_exists = output_path.is_file()
+    output_needs_header = (not output_exists) or output_path.stat().st_size == 0
+    with open(output_path, "a", newline="") as out_f:
         writer = csv.DictWriter(out_f, fieldnames=fieldnames)
-        writer.writeheader()
+        if output_needs_header:
+            writer.writeheader()
 
         for csv_path in data_files:
             study_name = csv_path.stem
@@ -440,46 +497,125 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
                 run_i += 1
                 show_run_progress(run_i, progress_total, run)
-
+                run_needs_output_row = run not in existing_runs
                 fasta_gz = fasta_dir / f"{run}.fasta.gz"
-                if not fasta_gz.is_file():
-                    print(
-                        f"Warning: missing FASTA for {study_name}/{run} "
-                        f"(expected {fasta_gz})",
-                        file=sys.stderr,
-                    )
-                    rows_missing_fasta += 1
-                    study_missing += 1
-                    show_run_progress(run_i, progress_total, run, "skipped: no FASTA")
-                    if first_run_per_study:
-                        break
-                    continue
-
-                if profile_mode:
-                    counts, sequence_rows, err, run_profile = (
-                        tetramer_counts_for_run_and_sequences_profiled(fasta_gz)
-                    )
-                    study_profile += run_profile
-                    total_profile += run_profile
-                else:
-                    counts, sequence_rows, err = tetramer_counts_for_run_and_sequences(
-                        fasta_gz
-                    )
-                if err:
-                    print(
-                        f"Warning: could not read {fasta_gz}: {err}",
-                        file=sys.stderr,
-                    )
-                    rows_missing_fasta += 1
-                    study_missing += 1
-                    show_run_progress(run_i, progress_total, run, "skipped: read error")
-                    if first_run_per_study:
-                        break
-                    continue
-
                 run_seq_output_path = seq_output_dir / f"{run}.csv.xz"
-                with lzma.open(run_seq_output_path, "wt", newline="") as run_out_f:
-                    csv.writer(run_out_f).writerows(sequence_rows)
+                run_needs_seq_output = not run_seq_output_path.is_file()
+
+                if not run_needs_output_row and not run_needs_seq_output:
+                    rows_already_in_output += 1
+                    run_seq_already_exists += 1
+                    show_run_progress(
+                        run_i, progress_total, run, "skipped: row+seq already exist"
+                    )
+                    if first_run_per_study:
+                        break
+                    continue
+
+                counts: Optional[List[int]] = None
+                sequence_rows: Optional[List[List[int]]] = None
+                read_counts_from_existing_seq = False
+
+                if run_needs_output_row and not run_needs_seq_output:
+                    counts, seq_err = counts_from_sequence_rows(run_seq_output_path)
+                    if seq_err is None and counts is not None:
+                        read_counts_from_existing_seq = True
+                    else:
+                        print(
+                            f"Warning: could not read existing sequence counts "
+                            f"{run_seq_output_path}: {seq_err}; recomputing from FASTA",
+                            file=sys.stderr,
+                        )
+
+                if counts is None:
+                    if not fasta_gz.is_file():
+                        print(
+                            f"Warning: missing FASTA for {study_name}/{run} "
+                            f"(expected {fasta_gz})",
+                            file=sys.stderr,
+                        )
+                        rows_missing_fasta += 1
+                        study_missing += 1
+                        show_run_progress(run_i, progress_total, run, "skipped: no FASTA")
+                        if first_run_per_study:
+                            break
+                        continue
+
+                    if profile_mode:
+                        counts, sequence_rows, err, run_profile = (
+                            tetramer_counts_for_run_and_sequences_profiled(fasta_gz)
+                        )
+                        study_profile += run_profile
+                        total_profile += run_profile
+                    else:
+                        counts, sequence_rows, err = tetramer_counts_for_run_and_sequences(
+                            fasta_gz
+                        )
+                    if err:
+                        print(
+                            f"Warning: could not read {fasta_gz}: {err}",
+                            file=sys.stderr,
+                        )
+                        rows_missing_fasta += 1
+                        study_missing += 1
+                        show_run_progress(run_i, progress_total, run, "skipped: read error")
+                        if first_run_per_study:
+                            break
+                        continue
+
+                if counts is None:
+                    # Defensive guard; should not happen, but keeps types explicit.
+                    show_run_progress(run_i, progress_total, run, "skipped: no counts")
+                    if first_run_per_study:
+                        break
+                    continue
+
+                if run_needs_seq_output:
+                    if sequence_rows is None:
+                        # We have counts loaded from existing seq rows; this branch means
+                        # sequence output is missing, so recompute from FASTA to write rows.
+                        if not fasta_gz.is_file():
+                            print(
+                                f"Warning: missing FASTA for {study_name}/{run} "
+                                f"(expected {fasta_gz})",
+                                file=sys.stderr,
+                            )
+                            rows_missing_fasta += 1
+                            study_missing += 1
+                            show_run_progress(
+                                run_i, progress_total, run, "skipped: no FASTA for seq output"
+                            )
+                            if first_run_per_study:
+                                break
+                            continue
+                        if profile_mode:
+                            counts, sequence_rows, err, run_profile = (
+                                tetramer_counts_for_run_and_sequences_profiled(fasta_gz)
+                            )
+                            study_profile += run_profile
+                            total_profile += run_profile
+                        else:
+                            counts, sequence_rows, err = tetramer_counts_for_run_and_sequences(
+                                fasta_gz
+                            )
+                        if err:
+                            print(
+                                f"Warning: could not read {fasta_gz}: {err}",
+                                file=sys.stderr,
+                            )
+                            rows_missing_fasta += 1
+                            study_missing += 1
+                            show_run_progress(
+                                run_i, progress_total, run, "skipped: read error"
+                            )
+                            if first_run_per_study:
+                                break
+                            continue
+                    with open_lzma_text(run_seq_output_path, "wt") as run_out_f:
+                        csv.writer(run_out_f).writerows(sequence_rows or [])
+                    run_seq_written += 1
+                else:
+                    run_seq_already_exists += 1
 
                 if sum(counts) == 0:
                     rows_zero_kmers += 1
@@ -489,19 +625,36 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         file=sys.stderr,
                     )
 
-                pct = percentages_from_counts(counts)
-                out_row: Dict[str, object] = {
-                    "cancer_type": cancer_type,
-                    "study_name": study_name,
-                    "Run": run,
-                    "sample_label": (row.get("sample_label") or "").strip(),
-                }
-                for kmer, val in zip(TETRAMERS, pct):
-                    out_row[kmer] = val
-                writer.writerow(out_row)
-                rows_written += 1
-                study_written += 1
-                show_run_progress(run_i, progress_total, run, "wrote row")
+                if run_needs_output_row:
+                    pct = percentages_from_counts(counts)
+                    out_row: Dict[str, object] = {
+                        "cancer_type": cancer_type,
+                        "study_name": study_name,
+                        "Run": run,
+                        "sample_label": (row.get("sample_label") or "").strip(),
+                    }
+                    for kmer, val in zip(TETRAMERS, pct):
+                        out_row[kmer] = val
+                    writer.writerow(out_row)
+                    rows_written += 1
+                    study_written += 1
+                    existing_runs.add(run)
+                    if run_needs_seq_output:
+                        show_run_progress(run_i, progress_total, run, "wrote row+seq")
+                    elif read_counts_from_existing_seq:
+                        show_run_progress(
+                            run_i, progress_total, run, "wrote row (from existing seq)"
+                        )
+                    else:
+                        show_run_progress(run_i, progress_total, run, "wrote row")
+                else:
+                    rows_already_in_output += 1
+                    if run_needs_seq_output:
+                        show_run_progress(run_i, progress_total, run, "wrote seq only")
+                    else:
+                        show_run_progress(
+                            run_i, progress_total, run, "skipped: row already exists"
+                        )
                 if first_run_per_study:
                     break
 
@@ -524,7 +677,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     flush=True,
                 )
 
-    print(f"Wrote {rows_written} rows to {output_path}")
+    print(f"Appended {rows_written} new rows to {output_path}")
+    print(f"Rows already in output: {rows_already_in_output}")
+    print(f"Per-run sequence files written: {run_seq_written}")
+    print(f"Per-run sequence files already present: {run_seq_already_exists}")
     if rows_missing_fasta:
         print(f"Skipped (missing/unreadable FASTA): {rows_missing_fasta}")
     if rows_zero_kmers:
