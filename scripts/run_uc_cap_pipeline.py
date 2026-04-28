@@ -11,7 +11,7 @@ CAP (cluster abundance profiles):
   - n_cap may be an integer or "all". When "all", sequence rows are streamed from
     per-run sequence count files under outputs/<cancer_type>/<study_name>/<Run>.csv(.xz).
 
-Input sequence features are tetranucleotide count vectors (256 columns).
+Input sequence features are tetramer count vectors (256 columns).
 """
 
 from __future__ import annotations
@@ -286,7 +286,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--cache-parquet",
         type=Path,
         default=root / "outputs" / "uc_cap" / "sequence_counts_first_10000_all_runs.parquet",
-        help="Cache Parquet with sequence-level tetranucleotide counts.",
+        help="Cache Parquet with sequence-level tetramer counts.",
     )
     parser.add_argument(
         "--outputs-dir",
@@ -297,7 +297,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--run-metadata-csv",
         type=Path,
-        default=root / "outputs" / "tetranucleotide_frequencies.csv",
+        default=root / "outputs" / "tetramer_frequencies.csv",
         help="Run metadata CSV used to append labels to CAP output.",
     )
     parser.add_argument(

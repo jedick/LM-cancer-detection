@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Train a classifier on tetranucleotide frequency profiles (256 ACGT 4-mers).
+Train a classifier on tetramer frequency profiles (256 ACGT 4-mers).
 
 Pipeline: optional **CLR** (on by default) → optional ``StandardScaler`` → **PCA** → **KNN**.
 PCA ``n_components`` starts at ``min(256, n_train - 1)`` (“off”: no reduction below the
@@ -13,7 +13,7 @@ tasks within each split: ``cancer_diagnosis`` (all samples; cancer vs healthy) o
 ``cancer_type`` (cancer-only; breast vs colorectal). We report binary ROC AUC on the
 test set. Use ``--baselines`` for majority-class and stratified-random dummy baselines.
 
-The frequency table produced by calculate_tetranucleotide_frequencies.py uses the
+The frequency table produced by calculate_tetramer_frequencies.py uses the
 column name ``sample_label``. You can override with ``--label-column`` (e.g. if your
 file uses ``sample_labels``).
 """
@@ -39,7 +39,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from shared_splits import stratified_split_70_10_20
 
-# Lexicographic ACGT tetramers (256 columns), matching calculate_tetranucleotide_frequencies.py
+# Lexicographic ACGT tetramers (256 columns), matching calculate_tetramer_frequencies.py
 TETRAMERS: Tuple[str, ...] = tuple(
     "".join(p) for p in itertools.product("ACGT", repeat=4)
 )
@@ -377,8 +377,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--csv",
         type=Path,
-        default=root / "outputs" / "tetranucleotide_frequencies.csv",
-        help="Path to tetranucleotide frequency CSV (default: repo root outputs/ file).",
+        default=root / "outputs" / "tetramer_frequencies.csv",
+        help="Path to tetramer frequency CSV (default: repo root outputs/ file).",
     )
     parser.add_argument(
         "--label-column",

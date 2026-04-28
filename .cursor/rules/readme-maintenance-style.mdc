@@ -10,7 +10,7 @@ Use this rule when editing `README.md`. Keep sections short, practical, and easy
 
 ## Core style
 
-- Follow existing section patterns such as **Downloading data** and **Tetranucleotide frequencies**: 2-4 plain sentences, no long digressions.
+- Follow existing section patterns such as **Downloading data** and **Tetramer frequencies**: 2-4 plain sentences, no long digressions.
 - Prioritize the main workflow: what the script does and how it was used to produce key outputs.
 - Prefer one concise sentence about usage over exhaustive option-by-option documentation.
 

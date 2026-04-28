@@ -14,7 +14,7 @@
 
 **Feature engineering**
 
-- *Run-averaged tetranucleotide profiles:* 4-mer counts are summed across all sequences in a run and converted to percentages. This collapses within-run sequence heterogeneity into a single 256-dimensional vector per run.
+- *Run-averaged tetramer profiles:* 4-mer counts are summed across all sequences in a run and converted to percentages. This collapses within-run sequence heterogeneity into a single 256-dimensional vector per run.
 - *Sequence-level cluster abundance profiles (UC/CAP):* Sequences are individually characterized by their 4-mer composition, clustered unsupervised, and each run is then represented by the distribution of its sequences across clusters. This preserves within-run compositional structure that flat aggregation discards.
 
 **Classical ML models:** KNN, random forest, logistic regression, SVM
@@ -53,9 +53,9 @@ See the table for an overview of all the steps and read below for details.
 | Step | Script | Target |
 |-----|--------|--------|
 | 1. Download | download_sra_data.py | `make download_data` |
-| 2. Tetramer counts | calculate_tetranucleotide_frequencies.py | `make tetramer_frequencies` |
+| 2. Tetramer counts | calculate_tetramer_frequencies.py | `make tetramer_frequencies` |
 | 3. Sequence cache | build_uc_cap_sequence_cache.py | `make sequence_cache` |
-| 4. Tetramer classifier | fit_tetranucleotide_classifier.py | `make fit_knn TASK=cancer_diagnosis` |
+| 4. Tetramer classifier | fit_tetramer_classifier.py | `make fit_knn TASK=cancer_diagnosis` |
 | 5. UC/CAP pipeline + classifier | run_uc_cap_pipeline.py + fit_uc_cap_classifier.py | `make fit_uc_cap TASK=cancer_diagnosis MODEL=random_forest N_UC=1000 N_CLUSTERS=2000 N_CAP=5000` |
 | 6. UC/CAP grid | grid_uc_cap_pipeline.py | `make grid_uc_cap` |
 
@@ -63,34 +63,34 @@ See the table for an overview of all the steps and read below for details.
 <summary>Inputs/Outputs by step</summary>
 
 1. Download. Inputs: `data/**/*.csv`. Outputs: `fasta/<study>/<Run>.fasta.gz`.
-2. Tetramer counts. Inputs: `fasta/<study>/<Run>.fasta.gz`. Outputs: `outputs/tetranucleotide_frequencies.csv`, `outputs/<cancer>/<study>/<Run>.csv.xz`.
+2. Tetramer counts. Inputs: `fasta/<study>/<Run>.fasta.gz`. Outputs: `outputs/tetramer_frequencies.csv`, `outputs/<cancer>/<study>/<Run>.csv.xz`.
 3. Sequence cache. Inputs: `outputs/<cancer>/<study>/<Run>.csv.xz`. Outputs: `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`.
-4. Tetramer classifier. Inputs: `outputs/tetranucleotide_frequencies.csv`. Outputs: `results/scratch/fit_tetranucleotide_classifier_*.json`.
-5. UC/CAP pipeline + classifier. Inputs: `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`, `outputs/tetranucleotide_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
+4. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: `results/scratch/fit_tetramer_classifier_*.json`.
+5. UC/CAP pipeline + classifier. Inputs: `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`, `outputs/tetramer_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
 6. UC/CAP grid. Inputs: `configs/pipeline.yaml`, `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` across the YAML grid.
 
 </details>
 
 ## Details
 
-### Tetranucleotide frequencies
+### Tetramer frequencies
 
-`calculate_tetranucleotide_frequencies.py` builds tetranucleotide (4-mer) profiles from the downloaded FASTA files.
+`calculate_tetramer_frequencies.py` builds tetramer (4-mer) profiles from the downloaded FASTA files.
 The script only processes rows with `sample_used=TRUE` in the CSV files under `data/`.
-It writes two outputs from the same pass: `outputs/tetranucleotide_frequencies.csv` has one row per run with labels plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
-The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` hold **raw integer** 4-mer counts per sequence for Unsupervised Clustering with Cluster Abundance Profiling (see below); each file has one row per FASTA sequence in encounter order, 256 columns with no header row, in the same lexicographic ACGT 4-mer order as the 256 feature columns in `outputs/tetranucleotide_frequencies.csv`.
+It writes two outputs from the same pass: `outputs/tetramer_frequencies.csv` has one row per run with labels plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
+The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` hold **raw integer** 4-mer counts per sequence for Unsupervised Clustering with Cluster Abundance Profiling (see below); each file has one row per FASTA sequence in encounter order, 256 columns with no header row, in the same lexicographic ACGT 4-mer order as the 256 feature columns in `outputs/tetramer_frequencies.csv`.
 
-### Run-level tetranucleotide classifier
+### Run-level tetramer classifier
 
-`fit_tetranucleotide_classifier.py` fits a KNN classifier on `outputs/tetranucleotide_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
+`fit_tetramer_classifier.py` fits a KNN classifier on `outputs/tetramer_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
 The script supports two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
 We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `results/`.
 
 ### Unsupervised Clustering with Cluster Abundance Profiling
 
-This stage takes the sequence-level tetranucleotide count files described above.
+This stage takes the sequence-level tetramer count files described above.
 
-- `build_uc_cap_sequence_cache.py` builds a cached sequence-level tetranucleotide table for UC/CAP exploration.
+- `build_uc_cap_sequence_cache.py` builds a cached sequence-level tetramer table for UC/CAP exploration.
   Running it with default arguments keeps only the first 5000 rows from each run file and saves the result in a Parquet table under `outputs/uc_cap`.
 - `run_uc_cap_pipeline.py` performs unsupervised clustering on a subset of cached rows (`n_uc`) and then assigns a larger subset of sequences (`n_cap`) to the learned cluster centroids, producing run-level cluster abundance profiles.
   Its main output is `outputs/uc_cap/cap_features_*.csv`, where each row is a sequencing run and the `cluster_*` columns are normalized per-run abundances used as features for downstream classification.

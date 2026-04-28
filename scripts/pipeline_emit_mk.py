@@ -9,7 +9,7 @@ Modes:
   pipeline_emit_mk.py <config.yaml> --get dotted.key
       Print a single scalar (for use in Makefile $(shell ...)).
 
-Examples: --get paths.data_dir   --get tetranucleotide.default_task
+Examples: --get paths.data_dir   --get tetramer.default_task
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def _emit_all_mk(cfg: dict[str, Any]) -> None:
         var = f"PIPE_{key.upper()}"
         val = _escape_make_rhs(str(raw).strip())
         print(f"{var} := {val}")
-    tet = cfg.get("tetranucleotide") or {}
+    tet = cfg.get("tetramer") or {}
     print(f"PIPE_DEFAULT_TASK := {tet.get('default_task', 'cancer_diagnosis')}")
     classifiers = cfg.get("uc_cap_classifiers") or ["random_forest"]
     print(f"PIPE_DEFAULT_UC_CAP_CLASSIFIER := {classifiers[0]}")

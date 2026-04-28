@@ -14,8 +14,8 @@ description: >-
 
 Keep **Table 1** in `manuscript/report.md` in sync with:
 
-- **`results/cancer_diagnosis_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_diagnosis --baselines`)
-- **`results/cancer_type_results.txt`** (stdout from `scripts/fit_tetranucleotide_classifier.py --task cancer_type --baselines`)
+- **`results/cancer_diagnosis_results.txt`** (stdout from `scripts/fit_tetramer_classifier.py --task cancer_diagnosis --baselines`)
+- **`results/cancer_type_results.txt`** (stdout from `scripts/fit_tetramer_classifier.py --task cancer_type --baselines`)
 
 ## Steps
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Build a cached sequence-level tetranucleotide table for UC/CAP exploration.
+Build a cached sequence-level tetramer table for UC/CAP exploration.
 
-Reads per-run sequence tetranucleotide count files from outputs/<cancer_type>/<study_name>/.
+Reads per-run sequence tetramer count files from outputs/<cancer_type>/<study_name>/.
 Each input file must contain 256 integer columns (no header) with one row per sequence.
 Compressed .csv.xz files are expected by default.
 
@@ -10,7 +10,7 @@ Writes one Parquet file containing:
   - study_name
   - Run
   - sequence_index (1-based row index within the source run file)
-  - 256 tetranucleotide count columns (AAAA ... TTTT, lexicographic ACGT order)
+  - 256 tetramer count columns (AAAA ... TTTT, lexicographic ACGT order)
 
 The script keeps only the first N rows from each run file (default: 10000).
 """

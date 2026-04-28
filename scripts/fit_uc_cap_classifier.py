@@ -230,7 +230,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--run-metadata-csv",
         type=Path,
-        default=root / "outputs" / "tetranucleotide_frequencies.csv",
+        default=root / "outputs" / "tetramer_frequencies.csv",
         help="Metadata CSV used to derive shared splits (must include Run,sample_label).",
     )
     parser.add_argument(
