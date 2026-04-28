@@ -81,7 +81,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--run-metadata-csv",
         type=Path,
-        default=root / "outputs" / "tetranucleotide_frequencies.csv",
+        default=root / "outputs" / "tetramer_frequencies.csv",
         help="Run metadata CSV for shared split reconstruction.",
     )
     parser.add_argument(

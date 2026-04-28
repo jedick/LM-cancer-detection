@@ -16,7 +16,7 @@ All benign samples and non-fecal samples in some studies were kept in our data f
 We split the data into stratified training, validation, and test sets (70:10:20). We held the validation set fixed (no cross-validation) to use the same splits for training both the LM (expensive compute - only one val set feasible) and this classical model.
 The same global split was used for downstream tasks, including cancer diagnosis prediction (using all samples) and cancer type prediction (using only cancer-positive samples in each fold).
 
-### Classification using run-level tetranucleotide frequencies
+### Classification using run-level tetramer frequencies
 
 We calculated tetramer frequencies for each run by counting 4-mers within each sequence, summing counts over all sequences in the run, then converting to percentages. 
 
@@ -24,11 +24,11 @@ We trained a K-nearest neighbors classifier on the 256 frequency features. We ap
 
 ### Classification using cluster abundance profiles
 
-Run-level tetranucleotide features summarize each sample with a single average profile and therefore do not directly capture how different sequence types are distributed within a run.
+Run-level tetramer features summarize each sample with a single average profile and therefore do not directly capture how different sequence types are distributed within a run.
 To preserve this within-run compositional structure, we used unsupervised clustering followed by cluster abundance profiles (UC/CAP), a reference-free and alignment-free approach.
 
 Because the sequence-level table is large, we first fit the unsupervised clustering model on a bounded subset of sequences from each run (`n_uc`).
-For each sequence, we computed a 256-dimensional tetranucleotide composition vector, then applied principal component analysis (PCA) and retained components that explained 95% of cumulative variance.
+For each sequence, we computed a 256-dimensional tetramer composition vector, then applied principal component analysis (PCA) and retained components that explained 95% of cumulative variance.
 We then fit k-means in this reduced space to obtain K centroids that define a sequence codebook.
 
 To construct run-level features, we assigned a larger subset of sequences per run (`n_cap`) to the learned centroids in the same transformed feature space.

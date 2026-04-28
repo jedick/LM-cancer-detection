@@ -1,4 +1,4 @@
-CSV: /home/jedick/projects/LM-cancer-detection/outputs/tetranucleotide_frequencies.csv
+CSV: /home/jedick/projects/LM-cancer-detection/outputs/tetramer_frequencies.csv
 Task: cancer_diagnosis (All samples: cancer vs healthy.)
 Samples: 1622, features: 256
 Class counts: {'cancer': 755, 'healthy': 867}

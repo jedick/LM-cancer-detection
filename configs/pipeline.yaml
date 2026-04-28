@@ -10,13 +10,13 @@ paths:
   results_dir: results
   # Ephemeral / local experiment outputs (gitignored); finalized copies go under results/
   results_scratch_dir: results/scratch
-  tetranucleotide_frequencies_csv: outputs/tetranucleotide_frequencies.csv
+  tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
   sequence_cache_parquet: outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet
   # CAP CSV layout from run_uc_cap_pipeline.py
   cap_csv_pattern: outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv
 
-# Binary classification tasks (fit_tetranucleotide_classifier.py, fit_uc_cap_classifier.py, grid_uc_cap_classifier.py)
+# Binary classification tasks (fit_tetramer_classifier.py, fit_uc_cap_classifier.py, grid_uc_cap_classifier.py)
 tasks:
   - cancer_diagnosis
   - cancer_type
@@ -27,9 +27,9 @@ uc_cap_classifiers:
   - logistic_regression
   - svm
 
-# Run-level tetranucleotide pipeline: CLR → optional scaler → PCA → KNN (fit_tetranucleotide_classifier.py).
+# Run-level tetramer pipeline: CLR → optional scaler → PCA → KNN (fit_tetramer_classifier.py).
 # Model name is fixed; hyperparameters are tuned from CLI defaults below.
-tetranucleotide:
+tetramer:
   model: knn
   default_task: cancer_diagnosis
   default_random_state: 0

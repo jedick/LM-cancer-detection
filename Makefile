@@ -13,10 +13,10 @@ PIPE_FASTA_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.fas
 PIPE_OUTPUTS_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.outputs_dir)
 PIPE_RESULTS_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.results_dir)
 PIPE_RESULTS_SCRATCH_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.results_scratch_dir)
-PIPE_TETRANUCLEOTIDE_FREQUENCIES_CSV := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.tetranucleotide_frequencies_csv)
+PIPE_TETRAMER_FREQUENCIES_CSV := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.tetramer_frequencies_csv)
 PIPE_UC_CAP_ROOT := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.uc_cap_root)
 PIPE_SEQUENCE_CACHE_PARQUET := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.sequence_cache_parquet)
-PIPE_DEFAULT_TASK := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get tetranucleotide.default_task)
+PIPE_DEFAULT_TASK := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get tetramer.default_task)
 PIPE_DEFAULT_UC_CAP_CLASSIFIER := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get uc_cap_classifiers.0)
 PIPE_SEQUENCE_CACHE_INPUT_SUFFIX := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get sequence_cache.input_suffix)
 PIPE_SEQUENCE_CACHE_N_MAX := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get sequence_cache.n_max_per_run)
@@ -47,7 +47,7 @@ N_UC ?= 1000
 N_CLUSTERS ?= 2000
 N_CAP ?= 5000
 
-TETRA_CSV := $(ROOT)/$(PIPE_TETRANUCLEOTIDE_FREQUENCIES_CSV)
+TETRA_CSV := $(ROOT)/$(PIPE_TETRAMER_FREQUENCIES_CSV)
 SEQ_CACHE := $(ROOT)/$(PIPE_SEQUENCE_CACHE_PARQUET)
 CAP_CSV_REL := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --render-cap-csv --n-uc $(N_UC) --n-clusters $(N_CLUSTERS) --n-cap $(N_CAP))
 CAP_CSV := $(ROOT)/$(CAP_CSV_REL)
@@ -71,7 +71,7 @@ help:
 	@echo "      writes $(PIPE_FASTA_DIR)/<study>/<Run>.fasta.gz)."
 	@echo ""
 	@echo "  make tetramer_frequencies"
-	@echo "      Build $(PIPE_TETRANUCLEOTIDE_FREQUENCIES_CSV) and per-run sequence"
+	@echo "      Build $(PIPE_TETRAMER_FREQUENCIES_CSV) and per-run sequence"
 	@echo "      count files under $(PIPE_OUTPUTS_DIR)/ (depends on data CSVs)."
 	@echo "      FASTA inputs under $(PIPE_FASTA_DIR)/ are not listed as prerequisites"
 	@echo "      (avoids huge dep lists); delete the CSV output to force a rebuild."
@@ -82,7 +82,7 @@ help:
 	@echo "      n_max=$(PIPE_SEQUENCE_CACHE_N_MAX) compression=$(PIPE_SEQUENCE_CACHE_COMPRESSION)"
 	@echo ""
 	@echo "  make fit_knn [TASK=$(PIPE_DEFAULT_TASK)]"
-	@echo "      Run fit_tetranucleotide_classifier.py; JSON -> $(PIPE_RESULTS_SCRATCH_DIR)/"
+	@echo "      Run fit_tetramer_classifier.py; JSON -> $(PIPE_RESULTS_SCRATCH_DIR)/"
 	@echo "      (use --results-json with no path, see script help)."
 	@echo ""
 	@echo "  make fit_uc_cap [TASK=...] [MODEL=...] [N_UC=...] [N_CLUSTERS=...] [N_CAP=...]"
@@ -94,10 +94,10 @@ help:
 	@echo "      Run scripts/grid_uc_cap_pipeline.py (grid from pipeline.yaml)."
 	@echo ""
 
-$(TETRA_CSV): $(DATA_CSVS) $(ROOT)/scripts/calculate_tetranucleotide_frequencies.py \
+$(TETRA_CSV): $(DATA_CSVS) $(ROOT)/scripts/calculate_tetramer_frequencies.py \
 		$(ROOT)/scripts/shared_splits.py
 	@mkdir -p "$(dir $(TETRA_CSV))"
-	cd "$(ROOT)" && $(PYTHON) scripts/calculate_tetranucleotide_frequencies.py
+	cd "$(ROOT)" && $(PYTHON) scripts/calculate_tetramer_frequencies.py
 
 tetramer_frequencies: $(TETRA_CSV)
 	@echo "Up to date: $(TETRA_CSV)"
@@ -115,9 +115,9 @@ download_data:
 	cd "$(ROOT)" && $(PYTHON) scripts/download_sra_data.py
 
 fit_knn: $(TETRA_CSV)
-	cd "$(ROOT)" && $(PYTHON) scripts/fit_tetranucleotide_classifier.py \
+	cd "$(ROOT)" && $(PYTHON) scripts/fit_tetramer_classifier.py \
 		--task "$(TASK)" \
-		--csv "$(PIPE_TETRANUCLEOTIDE_FREQUENCIES_CSV)" \
+		--csv "$(PIPE_TETRAMER_FREQUENCIES_CSV)" \
 		--results-json
 
 fit_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
@@ -140,7 +140,7 @@ fit_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
 		--csv "$(CAP_CSV_REL)" \
 		--task "$(TASK)" \
 		--classifier "$(MODEL)" \
-		--run-metadata-csv "$(PIPE_TETRANUCLEOTIDE_FREQUENCIES_CSV)" \
+		--run-metadata-csv "$(PIPE_TETRAMER_FREQUENCIES_CSV)" \
 		--results-json
 
 grid_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)

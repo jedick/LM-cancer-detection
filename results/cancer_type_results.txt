@@ -1,4 +1,4 @@
-CSV: /home/jedick/projects/LM-cancer-detection/outputs/tetranucleotide_frequencies.csv
+CSV: /home/jedick/projects/LM-cancer-detection/outputs/tetramer_frequencies.csv
 Task: cancer_type (Cancer-only samples: breast_cancer vs colorectal_cancer.)
 Samples: 755, features: 256
 Class counts: {'breast_cancer': 534, 'colorectal_cancer': 221}

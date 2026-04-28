@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Compute tetranucleotide frequency profiles per sequencing run (Run).
+Compute tetramer frequency profiles per sequencing run (Run).
 
 For each CSV row under data/ with sample_used=TRUE (case-insensitive), reads the
 matching gzip FASTA produced by download_sra_data.py (fasta/<study_name>/<Run>.fasta.gz),
 counts 4-mers in each FASTA sequence (no counting across sequence boundaries), sums
 counts for the run, converts to percentages (rounded to 3 decimals), and writes
-outputs/tetranucleotide_frequencies.csv for ML training.
+outputs/tetramer_frequencies.csv for ML training.
 
 Also writes per-run sequence-level 4-mer counts (256 integers per row, no header) to
 outputs/<cancer_type>/<study_name>/<Run>.csv.xz for downstream clustering.
@@ -113,7 +113,7 @@ def row_is_sample_used(row: Mapping[str, object]) -> bool:
 
 
 def count_tetramers_in_sequence(seq: str, counts: List[int]) -> None:
-    """Add tetranucleotide counts from one sequence into counts (length 256), pure Python."""
+    """Add tetramer counts from one sequence into counts (length 256), pure Python."""
     if len(seq) < 4:
         return
     s = seq.upper()
@@ -158,7 +158,7 @@ def configure_counting_backend(use_numba: bool) -> None:
 def accumulate_tetramers_from_sequence(
     seq: str, counts_buffer: Union[List[int], "np.ndarray"]
 ) -> None:
-    """Add tetranucleotide counts for one sequence into counts_buffer (256 bins)."""
+    """Add tetramer counts for one sequence into counts_buffer (256 bins)."""
     if _USE_NUMBA_COUNTING:
         if np is None or _count_tetramers_numba is None or _BASE_LUT_NUMBA is None:
             raise RuntimeError("Numba counting requested but dependencies are missing")
@@ -194,7 +194,7 @@ def tetramer_counts_for_run_and_sequences(
     fasta_gz: Path,
 ) -> Tuple[List[int], List[List[int]], Optional[str]]:
     """
-    One pass over the FASTA: tetranucleotide counts per sequence and summed run totals.
+    One pass over the FASTA: tetramer counts per sequence and summed run totals.
 
     Returns (run_counts, per_sequence_counts, error_message).
     run_counts is length 256; per_sequence_counts has one 256-count row per sequence.
@@ -335,7 +335,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--output",
         type=Path,
         default=None,
-        help="Output CSV path (default: <repo>/outputs/tetranucleotide_frequencies.csv)",
+        help="Output CSV path (default: <repo>/outputs/tetramer_frequencies.csv)",
     )
     parser.add_argument(
         "--first-run-per-study",
@@ -364,7 +364,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     repo_root = script_dir.parent
     data_dir = args.data_dir or (repo_root / "data")
     fasta_root = args.fasta_dir or (repo_root / "fasta")
-    output_path = args.output or (repo_root / "outputs" / "tetranucleotide_frequencies.csv")
+    output_path = args.output or (repo_root / "outputs" / "tetramer_frequencies.csv")
 
     if not data_dir.is_dir():
         print(f"Error: data directory not found: {data_dir}", file=sys.stderr)
@@ -485,7 +485,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     rows_zero_kmers += 1
                     study_zero += 1
                     print(
-                        f"Warning: zero tetranucleotides counted for {study_name}/{run}",
+                        f"Warning: zero tetramers counted for {study_name}/{run}",
                         file=sys.stderr,
                     )
 
@@ -510,7 +510,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(
                 f"  Finished: wrote {study_written}, "
                 f"skipped (missing/unreadable FASTA) {study_missing}, "
-                f"zero tetranucleotide counts {study_zero}",
+                f"zero tetramer counts {study_zero}",
                 flush=True,
             )
             if profile_mode and study_written > 0:
@@ -528,7 +528,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if rows_missing_fasta:
         print(f"Skipped (missing/unreadable FASTA): {rows_missing_fasta}")
     if rows_zero_kmers:
-        print(f"Runs with zero tetranucleotide counts: {rows_zero_kmers}")
+        print(f"Runs with zero tetramer counts: {rows_zero_kmers}")
     if profile_mode:
         total_sec = total_profile.total()
         io_pct = (100.0 * total_profile.io_parse_sec / total_sec) if total_sec else 0.0
