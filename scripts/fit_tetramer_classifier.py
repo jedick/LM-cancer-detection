@@ -2,7 +2,8 @@
 """
 Train a classifier on tetramer frequency profiles (256 ACGT 4-mers).
 
-Pipeline: optional **CLR** (on by default) → optional ``StandardScaler`` → **PCA** → **KNN**.
+Pipeline: optional **CLR** (on by default) → optional ``StandardScaler`` → **PCA** →
+one of **KNN**, **Random Forest**, or **Logistic Regression**.
 PCA ``n_components`` starts at ``min(256, n_train - 1)`` (“off”: no reduction below the
 train-feasible rank), then halves (128, 64, …), keeping only sizes whose **cumulative**
 explained variance on the **training** fold is at least ``--pca-min-variance`` (default 0.9).
@@ -33,6 +34,8 @@ import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
@@ -87,7 +90,7 @@ def _resolve_label_column(fieldnames: Sequence[str], explicit: Optional[str]) ->
 def _load_xy(
     csv_path: Path,
     label_column: str,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     with open(csv_path, newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         if reader.fieldnames is None:
@@ -100,11 +103,17 @@ def _load_xy(
             )
         xs: List[List[float]] = []
         ys: List[str] = []
+        study_names: List[str] = []
         for row in reader:
             lab = (row.get(label_column) or "").strip()
             if not lab:
                 raise SystemExit(
                     f"Empty {label_column!r} in row {len(xs) + 1}; fix labels before training."
+                )
+            study = (row.get("study_name") or "").strip()
+            if not study:
+                raise SystemExit(
+                    f"Empty 'study_name' in row {len(xs) + 1}; required for partition split."
                 )
             try:
                 xs.append([float(row[k]) for k in TETRAMERS])
@@ -113,9 +122,42 @@ def _load_xy(
                     f"Non-numeric tetramer value near data row {len(xs) + 1}: {exc}"
                 ) from exc
             ys.append(lab)
+            study_names.append(study)
     if not xs:
         raise SystemExit("No data rows in CSV.")
-    return np.asarray(xs, dtype=np.float64), np.asarray(ys)
+    return (
+        np.asarray(xs, dtype=np.float64),
+        np.asarray(ys),
+        np.asarray(study_names, dtype=object),
+    )
+
+
+def _load_study_partition_map(datasets_csv: Path) -> Dict[str, str]:
+    if not datasets_csv.is_file():
+        raise SystemExit(f"Datasets CSV not found: {datasets_csv}")
+    with open(datasets_csv, newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise SystemExit("Datasets CSV has no header row.")
+        required = {"study_name", "partition"}
+        missing = sorted(required - set(reader.fieldnames))
+        if missing:
+            raise SystemExit(f"Datasets CSV missing required columns: {missing}")
+        out: Dict[str, str] = {}
+        for row in reader:
+            study = (row.get("study_name") or "").strip()
+            part = (row.get("partition") or "").strip().lower()
+            if not study:
+                continue
+            if part not in {"development", "holdout"}:
+                raise SystemExit(
+                    f"Invalid partition {part!r} for study {study!r}; "
+                    "expected 'development' or 'holdout'."
+                )
+            out[study] = part
+    if not out:
+        raise SystemExit("Datasets CSV contains no study_name/partition mappings.")
+    return out
 
 
 def _parse_csv_ints(s: str) -> List[int]:
@@ -125,15 +167,59 @@ def _parse_csv_ints(s: str) -> List[int]:
         if not part:
             continue
         out.append(int(part))
-    if len(out) < 2:
-        raise SystemExit("Expected at least two comma-separated integers.")
+    if len(out) < 1:
+        raise SystemExit("Expected at least one comma-separated integer.")
+    return out
+
+
+def _parse_csv_floats(s: str) -> List[float]:
+    out: List[float] = []
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(float(part))
+    if len(out) < 1:
+        raise SystemExit("Expected at least one comma-separated numeric value.")
     return out
 
 
 def _parse_csv_strs(s: str) -> List[str]:
     out = [p.strip() for p in s.split(",") if p.strip()]
-    if len(out) < 2:
-        raise SystemExit("Expected at least two comma-separated strings.")
+    if len(out) < 1:
+        raise SystemExit("Expected at least one comma-separated string.")
+    return out
+
+
+def _parse_csv_optional_ints(s: str) -> List[Optional[int]]:
+    out: List[Optional[int]] = []
+    for part in s.split(","):
+        p = part.strip().lower()
+        if not p:
+            continue
+        if p == "none":
+            out.append(None)
+        else:
+            out.append(int(p))
+    if len(out) < 1:
+        raise SystemExit("Expected at least one value for optional int grid.")
+    return out
+
+
+def _parse_csv_class_weights(s: str) -> List[Optional[str]]:
+    out: List[Optional[str]] = []
+    for part in s.split(","):
+        p = part.strip().lower()
+        if not p:
+            continue
+        if p == "none":
+            out.append(None)
+        elif p == "balanced":
+            out.append("balanced")
+        else:
+            raise SystemExit("Class-weight grid values must be 'none' or 'balanced'.")
+    if len(out) < 1:
+        raise SystemExit("Expected at least one class-weight value.")
     return out
 
 
@@ -215,33 +301,55 @@ def build_pca_n_components_grid(
 
 def make_pipeline(
     *,
+    model: str,
     use_clr: bool,
     pseudocount: float,
     use_scaler: bool,
-    pca_n_components: int,
+    pca_n_components: Optional[int],
     pca_random_state: int,
 ) -> Pipeline:
-    """Optional CLR → optional StandardScaler → PCA → KNeighborsClassifier."""
+    """Optional CLR → optional StandardScaler → PCA → classifier."""
     steps: List[Tuple[str, object]] = []
     if use_clr:
         steps.append(("clr", CLRTransformer(pseudocount=pseudocount)))
     if use_scaler:
         steps.append(("scaler", StandardScaler()))
-    steps.append(
-        (
-            "pca",
-            PCA(
-                n_components=pca_n_components,
-                svd_solver="full",
-                random_state=pca_random_state,
-            ),
+    if pca_n_components is not None:
+        steps.append(
+            (
+                "pca",
+                PCA(
+                    n_components=pca_n_components,
+                    svd_solver="full",
+                    random_state=pca_random_state,
+                ),
+            )
         )
-    )
-    steps.append(("clf", KNeighborsClassifier()))
+    if model == "knn":
+        steps.append(("clf", KNeighborsClassifier()))
+    elif model == "random_forest":
+        steps.append(("clf", RandomForestClassifier(random_state=pca_random_state)))
+    elif model == "logistic_regression":
+        # Use a higher iteration cap to avoid frequent lbfgs convergence warnings.
+        steps.append(
+            ("clf", LogisticRegression(random_state=pca_random_state, max_iter=1000))
+        )
+    else:
+        raise SystemExit(f"Unknown --model value: {model!r}")
     return Pipeline(steps)
 
 
-def tune_knn_pca_on_val(
+def _score_val(y_true: np.ndarray, y_pred: np.ndarray, scoring: str) -> float:
+    if scoring == "accuracy":
+        return float(accuracy_score(y_true, y_pred))
+    if scoring == "f1_macro":
+        return float(f1_score(y_true, y_pred, average="macro"))
+    if scoring == "f1_weighted":
+        return float(f1_score(y_true, y_pred, average="weighted"))
+    raise SystemExit(f"Unknown scoring: {scoring!r}")
+
+
+def tune_knn_on_val(
     pipe: Pipeline,
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -252,15 +360,6 @@ def tune_knn_pca_on_val(
     weights_list: Sequence[str],
     scoring: str,
 ) -> Tuple[Dict[str, object], float]:
-    def score_val(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-        if scoring == "accuracy":
-            return float(accuracy_score(y_true, y_pred))
-        if scoring == "f1_macro":
-            return float(f1_score(y_true, y_pred, average="macro"))
-        if scoring == "f1_weighted":
-            return float(f1_score(y_true, y_pred, average="weighted"))
-        raise SystemExit(f"Unknown scoring: {scoring!r}")
-
     best_score = -1.0
     best_params: Dict[str, object] = {}
     for n_components in n_components_list:
@@ -273,7 +372,7 @@ def tune_knn_pca_on_val(
                 )
                 pipe.fit(X_train, y_train)
                 y_pred = pipe.predict(X_val)
-                s = score_val(y_val, y_pred)
+                s = _score_val(y_val, y_pred, scoring)
                 if s > best_score:
                     best_score = s
                     best_params = {
@@ -281,6 +380,85 @@ def tune_knn_pca_on_val(
                         "n_neighbors": n_neighbors,
                         "weights": weights,
                     }
+    return best_params, best_score
+
+
+def tune_random_forest_on_val(
+    pipe: Pipeline,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    n_estimators_list: Sequence[int],
+    max_depth_list: Sequence[Optional[int]],
+    min_samples_leaf_list: Sequence[int],
+    scoring: str,
+) -> Tuple[Dict[str, object], float]:
+    best_score = -1.0
+    best_params: Dict[str, object] = {}
+    for n_estimators in n_estimators_list:
+        for max_depth in max_depth_list:
+            for min_samples_leaf in min_samples_leaf_list:
+                pipe.set_params(
+                    clf__n_estimators=n_estimators,
+                    clf__max_depth=max_depth,
+                    clf__min_samples_leaf=min_samples_leaf,
+                )
+                pipe.fit(X_train, y_train)
+                y_pred = pipe.predict(X_val)
+                s = _score_val(y_val, y_pred, scoring)
+                if s > best_score:
+                    best_score = s
+                    best_params = {
+                        "n_estimators": n_estimators,
+                        "max_depth": max_depth,
+                        "min_samples_leaf": min_samples_leaf,
+                    }
+    return best_params, best_score
+
+
+def tune_logistic_regression_on_val(
+    pipe: Pipeline,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    n_components_list: Sequence[int],
+    c_list: Sequence[float],
+    solver_list: Sequence[str],
+    class_weight_list: Sequence[Optional[str]],
+    scoring: str,
+) -> Tuple[Dict[str, object], float]:
+    allowed_solvers = {"lbfgs", "liblinear", "saga"}
+    bad_solvers = [s for s in solver_list if s not in allowed_solvers]
+    if bad_solvers:
+        raise SystemExit(
+            f"Unsupported logistic-regression solver(s): {bad_solvers}. "
+            "Allowed: lbfgs, liblinear, saga."
+        )
+    best_score = -1.0
+    best_params: Dict[str, object] = {}
+    for n_components in n_components_list:
+        for c_val in c_list:
+            for solver in solver_list:
+                for class_weight in class_weight_list:
+                    pipe.set_params(
+                        pca__n_components=n_components,
+                        clf__C=c_val,
+                        clf__solver=solver,
+                        clf__class_weight=class_weight,
+                    )
+                    pipe.fit(X_train, y_train)
+                    y_pred = pipe.predict(X_val)
+                    s = _score_val(y_val, y_pred, scoring)
+                    if s > best_score:
+                        best_score = s
+                        best_params = {
+                            "n_components": n_components,
+                            "C": c_val,
+                            "solver": solver,
+                            "class_weight": class_weight,
+                        }
     return best_params, best_score
 
 
@@ -341,14 +519,6 @@ def _require_binary_classes(y: np.ndarray, *, split_name: str, task: str) -> Non
         )
 
 
-def _task_description(task: str) -> str:
-    if task == "cancer_diagnosis":
-        return "All samples: cancer vs healthy."
-    if task == "cancer_type":
-        return "Cancer-only samples: breast_cancer vs colorectal_cancer."
-    raise SystemExit(f"Unknown --task value: {task!r}")
-
-
 def _float_for_json(x: float) -> Optional[float]:
     """JSON-serializable float; None for NaN/inf."""
     if not math.isfinite(x):
@@ -356,14 +526,16 @@ def _float_for_json(x: float) -> Optional[float]:
     return float(x)
 
 
-def _results_json_out_path(repo_root: Path, raw: Optional[str], *, task: str) -> Optional[Path]:
+def _results_json_out_path(
+    repo_root: Path, raw: Optional[str], *, task: str, model: str
+) -> Optional[Path]:
     """None = skip; empty str = auto path under results/scratch/."""
     if raw is None:
         return None
     if raw == "":
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         stem = Path(__file__).stem
-        name = f"{stem}_{task}_knn_{ts}.json"
+        name = f"{stem}_{task}_{model}_{ts}.json"
         return repo_root / "results" / "scratch" / name
     return Path(raw).expanduser()
 
@@ -384,6 +556,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--label-column",
         default=None,
         help="Target column name (default: sample_labels if present else sample_label).",
+    )
+    parser.add_argument(
+        "--datasets-csv",
+        type=Path,
+        default=root / "configs" / "datasets.csv",
+        help="Study partition table with study_name,partition columns.",
+    )
+    parser.add_argument(
+        "--model",
+        choices=("knn", "random_forest", "logistic_regression"),
+        default="knn",
+        help="Classifier to train (default: knn).",
     )
     parser.add_argument(
         "--task",
@@ -429,13 +613,49 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--n-neighbors",
         type=str,
         default="5,15",
-        help="Comma-separated n_neighbors values for the tuning grid (default: 5,15).",
+        help="Comma-separated n_neighbors values for KNN tuning (default: 5,15).",
     )
     parser.add_argument(
         "--weights",
         type=str,
         default="uniform,distance",
-        help="Comma-separated weights values for the tuning grid (default: uniform,distance).",
+        help="Comma-separated weights values for KNN tuning (default: uniform,distance).",
+    )
+    parser.add_argument(
+        "--rf-n-estimators",
+        type=str,
+        default="200,500",
+        help="Comma-separated n_estimators values for random-forest tuning.",
+    )
+    parser.add_argument(
+        "--rf-max-depth",
+        type=str,
+        default="none,10",
+        help="Comma-separated max_depth values for random-forest tuning (use 'none').",
+    )
+    parser.add_argument(
+        "--rf-min-samples-leaf",
+        type=str,
+        default="1,2",
+        help="Comma-separated min_samples_leaf values for random-forest tuning.",
+    )
+    parser.add_argument(
+        "--lr-c",
+        type=str,
+        default="0.1,1.0,10.0",
+        help="Comma-separated C values for logistic-regression tuning.",
+    )
+    parser.add_argument(
+        "--lr-solver",
+        type=str,
+        default="lbfgs,liblinear",
+        help="Comma-separated solver values for logistic-regression tuning.",
+    )
+    parser.add_argument(
+        "--lr-class-weight",
+        type=str,
+        default="none,balanced",
+        help="Comma-separated class_weight values for logistic-regression tuning.",
     )
     parser.add_argument(
         "--scoring",
@@ -457,7 +677,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ),
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
-    results_json_path = _results_json_out_path(root, args.results_json, task=args.task)
+    results_json_path = _results_json_out_path(
+        root, args.results_json, task=args.task, model=args.model
+    )
     if args.clr_pseudocount <= 0:
         raise SystemExit("--clr-pseudocount must be positive.")
     if not 0.0 < args.pca_min_variance <= 1.0:
@@ -473,87 +695,183 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise SystemExit("CSV has no header row.")
         label_column = _resolve_label_column(reader.fieldnames, args.label_column)
 
-    X_raw, y_raw = _load_xy(csv_path, label_column)
+    X_raw, y_raw, study_raw = _load_xy(csv_path, label_column)
+    study_partition_map = _load_study_partition_map(args.datasets_csv)
+    partitions: List[str] = []
+    missing_studies: set[str] = set()
+    for study in study_raw:
+        part = study_partition_map.get(str(study))
+        if part is None:
+            missing_studies.add(str(study))
+            partitions.append("missing")
+        else:
+            partitions.append(part)
+    if missing_studies:
+        sample = sorted(missing_studies)[:5]
+        raise SystemExit(
+            "Some study_name values in the tetramer CSV are missing from datasets.csv. "
+            f"Example studies: {sample}"
+        )
+    partition_arr = np.asarray(partitions, dtype=object)
+    dev_mask = partition_arr == "development"
+    holdout_mask = partition_arr == "holdout"
+    if not np.any(dev_mask):
+        raise SystemExit("No development rows found in tetramer CSV for training.")
+    if not np.any(holdout_mask):
+        raise SystemExit("No holdout rows found in tetramer CSV for evaluation.")
+
     n_neighbors_list = _parse_csv_ints(args.n_neighbors)
     weights_list = _parse_csv_strs(args.weights)
+    rf_n_estimators_list = _parse_csv_ints(args.rf_n_estimators)
+    rf_max_depth_list = _parse_csv_optional_ints(args.rf_max_depth)
+    rf_min_samples_leaf_list = _parse_csv_ints(args.rf_min_samples_leaf)
+    lr_c_list = _parse_csv_floats(args.lr_c)
+    lr_solver_list = _parse_csv_strs(args.lr_solver)
+    lr_class_weight_list = _parse_csv_class_weights(args.lr_class_weight)
 
-    # Split once on original labels so both tasks share a consistent base partition.
+    # Split once on development labels so both tasks share a consistent base partition.
+    X_dev_raw = X_raw[dev_mask]
+    y_dev_raw = y_raw[dev_mask]
+    X_holdout_raw = X_raw[holdout_mask]
+    y_holdout_raw = y_raw[holdout_mask]
     X_train_raw, X_val_raw, X_test_raw, y_train_raw, y_val_raw, y_test_raw = (
-        stratified_split_70_10_20(X_raw, y_raw, random_state=args.random_state)
+        stratified_split_70_10_20(X_dev_raw, y_dev_raw, random_state=args.random_state)
     )
     X_train, y_train = _prepare_task_data(X_train_raw, y_train_raw, args.task)
     X_val, y_val = _prepare_task_data(X_val_raw, y_val_raw, args.task)
     X_test, y_test = _prepare_task_data(X_test_raw, y_test_raw, args.task)
-    task_desc = _task_description(args.task)
+    X_holdout, y_holdout = _prepare_task_data(X_holdout_raw, y_holdout_raw, args.task)
     _require_binary_classes(y_train, split_name="train split", task=args.task)
     _require_binary_classes(y_val, split_name="validation split", task=args.task)
     _require_binary_classes(y_test, split_name="test split", task=args.task)
-    y_all = np.concatenate((y_train, y_val, y_test))
+    y_dev_all = np.concatenate((y_train, y_val, y_test))
 
-    print(f"CSV: {csv_path}", flush=True)
-    print(f"Task: {args.task} ({task_desc})", flush=True)
-    print(f"Samples: {len(y_all)}, features: {X_train.shape[1]}", flush=True)
-    print(f"Class counts: {_label_counts(y_all)}", flush=True)
+    print(
+        f"Samples: development={len(y_dev_all)}, holdout={len(y_holdout)}, "
+        f"features={X_train.shape[1]}",
+        flush=True,
+    )
+    print(f"Class counts (development): {_label_counts(y_dev_all)}", flush=True)
+    print(f"Class counts (holdout): {_label_counts(y_holdout)}", flush=True)
     print(
         f"Split sizes — train: {len(y_train)}, val: {len(y_val)}, test: {len(y_test)}",
         flush=True,
     )
-    print(f"CLR: {'off' if args.no_clr else 'on'}", flush=True)
 
     use_scaler = not args.no_scaler
     use_clr = not args.no_clr
-    n_comp_grid = build_pca_n_components_grid(
-        X_train,
-        use_clr=use_clr,
-        pseudocount=args.clr_pseudocount,
-        use_scaler=use_scaler,
-        min_explained_variance=args.pca_min_variance,
-        pca_random_state=args.random_state,
-    )
-    print(
-        f"PCA n_components candidates (min cumulative EV >= {args.pca_min_variance}): "
-        f"{n_comp_grid}",
-        flush=True,
-    )
+    n_comp_grid: List[int] = []
+    if args.model != "random_forest":
+        n_comp_grid = build_pca_n_components_grid(
+            X_train,
+            use_clr=use_clr,
+            pseudocount=args.clr_pseudocount,
+            use_scaler=use_scaler,
+            min_explained_variance=args.pca_min_variance,
+            pca_random_state=args.random_state,
+        )
+        print(
+            f"PCA n_components candidates (min cumulative EV >= {args.pca_min_variance}): "
+            f"{n_comp_grid} (CLR: {'on' if use_clr else 'off'})",
+            flush=True,
+        )
+    else:
+        print("PCA: off for random_forest", flush=True)
 
     pipe = make_pipeline(
+        model=args.model,
         use_clr=use_clr,
         pseudocount=args.clr_pseudocount,
         use_scaler=use_scaler,
-        pca_n_components=n_comp_grid[0],
+        pca_n_components=(n_comp_grid[0] if n_comp_grid else None),
         pca_random_state=args.random_state,
     )
-    print(
-        "Tuning on validation, grid "
-        f"n_components={n_comp_grid}, "
-        f"n_neighbors={n_neighbors_list}, weights={weights_list}",
-        flush=True,
-    )
-    best_params, best_val_score = tune_knn_pca_on_val(
-        pipe,
-        X_train,
-        y_train,
-        X_val,
-        y_val,
-        n_components_list=n_comp_grid,
-        n_neighbors_list=n_neighbors_list,
-        weights_list=weights_list,
-        scoring=args.scoring,
-    )
+    if args.model == "knn":
+        print(
+            "Tuning on validation, grid "
+            f"n_components={n_comp_grid}, "
+            f"n_neighbors={n_neighbors_list}, weights={weights_list}",
+            flush=True,
+        )
+        best_params, best_val_score = tune_knn_on_val(
+            pipe,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            n_components_list=n_comp_grid,
+            n_neighbors_list=n_neighbors_list,
+            weights_list=weights_list,
+            scoring=args.scoring,
+        )
+        pipe.set_params(
+            pca__n_components=best_params["n_components"],
+            clf__n_neighbors=best_params["n_neighbors"],
+            clf__weights=best_params["weights"],
+        )
+    elif args.model == "random_forest":
+        print(
+            "Tuning on validation, grid "
+            f"n_estimators={rf_n_estimators_list}, "
+            f"max_depth={rf_max_depth_list}, "
+            f"min_samples_leaf={rf_min_samples_leaf_list}",
+            flush=True,
+        )
+        best_params, best_val_score = tune_random_forest_on_val(
+            pipe,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            n_estimators_list=rf_n_estimators_list,
+            max_depth_list=rf_max_depth_list,
+            min_samples_leaf_list=rf_min_samples_leaf_list,
+            scoring=args.scoring,
+        )
+        pipe.set_params(
+            clf__n_estimators=best_params["n_estimators"],
+            clf__max_depth=best_params["max_depth"],
+            clf__min_samples_leaf=best_params["min_samples_leaf"],
+        )
+    else:
+        print(
+            "Tuning on validation, grid "
+            f"n_components={n_comp_grid}, "
+            f"C={lr_c_list}, solver={lr_solver_list}, class_weight={lr_class_weight_list}",
+            flush=True,
+        )
+        best_params, best_val_score = tune_logistic_regression_on_val(
+            pipe,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            n_components_list=n_comp_grid,
+            c_list=lr_c_list,
+            solver_list=lr_solver_list,
+            class_weight_list=lr_class_weight_list,
+            scoring=args.scoring,
+        )
+        pipe.set_params(
+            pca__n_components=best_params["n_components"],
+            clf__C=best_params["C"],
+            clf__solver=best_params["solver"],
+            clf__class_weight=best_params["class_weight"],
+        )
     print(f"Best validation {args.scoring}: {best_val_score:.6f}", flush=True)
     print(f"Best hyperparameters: {best_params}", flush=True)
-
-    pipe.set_params(
-        pca__n_components=best_params["n_components"],
-        clf__n_neighbors=best_params["n_neighbors"],
-        clf__weights=best_params["weights"],
-    )
     pipe.fit(X_train, y_train)
     y_proba = pipe.predict_proba(X_test)
     clf_classes = pipe.named_steps["clf"].classes_
-    knn_auc = test_binary_roc_auc(y_test, y_proba, clf_classes)
-    print("\nTest set (binary ROC AUC):", flush=True)
-    print(f"  KNN: {_format_auc(knn_auc)}", flush=True)
+    model_auc = test_binary_roc_auc(y_test, y_proba, clf_classes)
+    holdout_auc = float("nan")
+    if len(y_holdout) > 0:
+        holdout_auc = test_binary_roc_auc(
+            y_holdout, pipe.predict_proba(X_holdout), clf_classes
+        )
+    print("\nEvaluation (binary ROC AUC):", flush=True)
+    print(f"  {args.model} test: {_format_auc(model_auc)}", flush=True)
+    print(f"  {args.model} holdout: {_format_auc(holdout_auc)}", flush=True)
 
     if args.baselines:
         print("\nTest set baselines (binary ROC AUC):", flush=True)
@@ -572,7 +890,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if results_json_path is not None:
         config = {
             "csv": str(csv_path.resolve()),
+            "datasets_csv": str(args.datasets_csv.resolve()),
             "label_column": label_column,
+            "model": args.model,
             "task": args.task,
             "random_state": args.random_state,
             "no_scaler": args.no_scaler,
@@ -582,23 +902,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "baselines": args.baselines,
             "n_neighbors": args.n_neighbors,
             "weights": args.weights,
+            "rf_n_estimators": args.rf_n_estimators,
+            "rf_max_depth": args.rf_max_depth,
+            "rf_min_samples_leaf": args.rf_min_samples_leaf,
+            "lr_c": args.lr_c,
+            "lr_solver": args.lr_solver,
+            "lr_class_weight": args.lr_class_weight,
             "scoring": args.scoring,
             "pca_n_components_candidates": [int(x) for x in n_comp_grid],
-            "best_hyperparameters": {
-                "n_components": int(best_params["n_components"]),
-                "n_neighbors": int(best_params["n_neighbors"]),
-                "weights": str(best_params["weights"]),
-            },
+            "best_hyperparameters": best_params,
         }
         payload = {
             "script": Path(__file__).name,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "task": args.task,
-            "model": "knn",
+            "model": args.model,
             "results_json": str(results_json_path.resolve()),
             "config": config,
             "metrics": {
-                "test_roc_auc": _float_for_json(knn_auc),
+                "test_roc_auc": _float_for_json(model_auc),
+                "holdout_roc_auc": _float_for_json(holdout_auc),
                 "validation_score": float(best_val_score),
                 "validation_metric": args.scoring,
             },

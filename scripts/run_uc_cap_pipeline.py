@@ -34,6 +34,12 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import PCA
 from shared_splits import stratified_split_70_10_20
 
+try:
+    import yaml
+except ImportError as exc:  # pragma: no cover
+    print(f"PyYAML is required ({exc})", file=sys.stderr)
+    raise SystemExit(1) from exc
+
 
 RUN_FILE_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
 TETRAMERS: Tuple[str, ...] = tuple(
@@ -65,6 +71,18 @@ def parse_n_cap(raw: str) -> Union[int, str]:
     if value <= 0:
         raise ValueError("n_cap must be positive or 'all'")
     return value
+
+
+def _default_cache_parquet_from_config(repo_root: Path, config_path: Path) -> Path:
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    try:
+        uc_cap_root_rel = str(cfg["paths"]["uc_cap_root"]).strip()
+        n_max = int(cfg["sequence_cache"]["n_max_per_run"])
+    except (TypeError, KeyError, ValueError) as exc:
+        raise SystemExit(
+            f"Invalid pipeline config for cache path defaults in {config_path}: {exc}"
+        ) from exc
+    return repo_root / uc_cap_root_rel / f"sequence_counts_first_{n_max}_all_runs.parquet"
 
 
 def iter_run_files(outputs_dir: Path) -> Iterable[Tuple[str, str, Path]]:
@@ -283,10 +301,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=root / "configs" / "pipeline.yaml",
+        help="Path to pipeline.yaml (used to derive default cache parquet path).",
+    )
+    parser.add_argument(
         "--cache-parquet",
         type=Path,
-        default=root / "outputs" / "uc_cap" / "sequence_counts_first_10000_all_runs.parquet",
-        help="Cache Parquet with sequence-level tetramer counts.",
+        default=None,
+        help="Cache Parquet with sequence-level tetramer counts (default: derived from pipeline.yaml).",
     )
     parser.add_argument(
         "--outputs-dir",
@@ -377,6 +401,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
+    repo_root = Path(__file__).resolve().parent.parent
+    args.cache_parquet = (
+        args.cache_parquet
+        if args.cache_parquet is not None
+        else _default_cache_parquet_from_config(repo_root, args.config)
+    )
     try:
         n_cap = parse_n_cap(args.n_cap)
     except ValueError as exc:

@@ -15,10 +15,8 @@ PIPE_RESULTS_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.r
 PIPE_RESULTS_SCRATCH_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.results_scratch_dir)
 PIPE_TETRAMER_FREQUENCIES_CSV := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.tetramer_frequencies_csv)
 PIPE_UC_CAP_ROOT := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.uc_cap_root)
-PIPE_SEQUENCE_CACHE_PARQUET := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.sequence_cache_parquet)
 PIPE_DEFAULT_TASK := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get tetramer.default_task)
 PIPE_DEFAULT_UC_CAP_CLASSIFIER := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get uc_cap_classifiers.0)
-PIPE_SEQUENCE_CACHE_INPUT_SUFFIX := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get sequence_cache.input_suffix)
 PIPE_SEQUENCE_CACHE_N_MAX := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get sequence_cache.n_max_per_run)
 PIPE_SEQUENCE_CACHE_COMPRESSION := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get sequence_cache.parquet_compression)
 PIPE_UCAP_RANDOM_STATE := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.random_state)
@@ -36,19 +34,19 @@ $(error PyYAML is required for the Makefile (pip install pyyaml))
 endif
 
 # Optional overrides for build_uc_cap_sequence_cache.py (defaults come from YAML).
-SEQ_INPUT_SUFFIX ?= $(PIPE_SEQUENCE_CACHE_INPUT_SUFFIX)
 SEQ_N_MAX ?= $(PIPE_SEQUENCE_CACHE_N_MAX)
 SEQ_COMPRESSION ?= $(PIPE_SEQUENCE_CACHE_COMPRESSION)
 
-# Task / model / UC-CAP triple (override on command line, e.g. make fit_knn TASK=cancer_type).
+# Task / model / UC-CAP triple (override on command line, e.g. make fit_tetramer TASK=cancer_type MODEL=knn).
 TASK ?= $(PIPE_DEFAULT_TASK)
-MODEL ?= $(PIPE_DEFAULT_UC_CAP_CLASSIFIER)
+MODEL ?=
+UCAP_MODEL ?= $(PIPE_DEFAULT_UC_CAP_CLASSIFIER)
 N_UC ?= 1000
 N_CLUSTERS ?= 2000
 N_CAP ?= 5000
 
 TETRA_CSV := $(ROOT)/$(PIPE_TETRAMER_FREQUENCIES_CSV)
-SEQ_CACHE := $(ROOT)/$(PIPE_SEQUENCE_CACHE_PARQUET)
+SEQ_CACHE := $(ROOT)/$(PIPE_UC_CAP_ROOT)/sequence_counts_first_$(SEQ_N_MAX)_all_runs.parquet
 CAP_CSV_REL := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --render-cap-csv --n-uc $(N_UC) --n-clusters $(N_CLUSTERS) --n-cap $(N_CAP))
 CAP_CSV := $(ROOT)/$(CAP_CSV_REL)
 
@@ -61,7 +59,7 @@ DATA_CSVS := $(shell find $(ROOT)/$(PIPE_DATA_DIR) -type f -name '*.csv' 2>/dev/
 
 .DEFAULT_GOAL := help
 
-.PHONY: help download_data tetramer_frequencies sequence_cache fit_knn fit_uc_cap grid_uc_cap
+.PHONY: help download_data tetramer_frequencies sequence_cache fit_tetramer fit_uc_cap grid_uc_cap
 
 help:
 	@echo "LM-cancer-detection Makefile (paths from configs/pipeline.yaml)"
@@ -77,12 +75,12 @@ help:
 	@echo "      FASTA inputs under $(PIPE_FASTA_DIR)/ are not listed as prerequisites"
 	@echo "      (avoids huge dep lists); delete the CSV output to force a rebuild."
 	@echo ""
-	@echo "  make sequence_cache  [SEQ_INPUT_SUFFIX=$(SEQ_INPUT_SUFFIX)]"
-	@echo "      Build $(PIPE_SEQUENCE_CACHE_PARQUET) via build_uc_cap_sequence_cache.py."
-	@echo "      Defaults from YAML: input_suffix=$(PIPE_SEQUENCE_CACHE_INPUT_SUFFIX)"
-	@echo "      n_max=$(PIPE_SEQUENCE_CACHE_N_MAX) compression=$(PIPE_SEQUENCE_CACHE_COMPRESSION)"
+	@echo "  make sequence_cache"
+	@echo "      Build $(SEQ_CACHE) via build_uc_cap_sequence_cache.py."
+	@echo "      Defaults from YAML: n_max=$(PIPE_SEQUENCE_CACHE_N_MAX)"
+	@echo "      compression=$(PIPE_SEQUENCE_CACHE_COMPRESSION)"
 	@echo ""
-	@echo "  make fit_knn [TASK=$(PIPE_DEFAULT_TASK)]"
+	@echo "  make fit_tetramer [TASK=$(PIPE_DEFAULT_TASK)] [MODEL=knn|random_forest|logistic_regression]"
 	@echo "      Run fit_tetramer_classifier.py; JSON -> $(PIPE_RESULTS_SCRATCH_DIR)/"
 	@echo "      (use --results-json with no path, see script help)."
 	@echo ""
@@ -105,7 +103,7 @@ tetramer_frequencies: $(TETRA_CSV)
 
 $(SEQ_CACHE): $(TETRA_CSV) $(ROOT)/scripts/build_uc_cap_sequence_cache.py
 	cd "$(ROOT)" && $(PYTHON) scripts/build_uc_cap_sequence_cache.py \
-		--input-suffix "$(SEQ_INPUT_SUFFIX)" \
+		--output "$(SEQ_CACHE)" \
 		--n-max "$(SEQ_N_MAX)" \
 		--compression "$(SEQ_COMPRESSION)"
 
@@ -115,8 +113,9 @@ sequence_cache: $(SEQ_CACHE)
 download_data:
 	cd "$(ROOT)" && $(PYTHON) scripts/download_sra_data.py
 
-fit_knn: $(TETRA_CSV)
+fit_tetramer: $(TETRA_CSV)
 	cd "$(ROOT)" && $(PYTHON) scripts/fit_tetramer_classifier.py \
+		--model "$(if $(strip $(MODEL)),$(MODEL),knn)" \
 		--task "$(TASK)" \
 		--csv "$(PIPE_TETRAMER_FREQUENCIES_CSV)" \
 		--results-json
@@ -140,7 +139,7 @@ fit_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
 	cd "$(ROOT)" && $(PYTHON) scripts/fit_uc_cap_classifier.py \
 		--csv "$(CAP_CSV_REL)" \
 		--task "$(TASK)" \
-		--classifier "$(MODEL)" \
+		--classifier "$(if $(strip $(MODEL)),$(MODEL),$(UCAP_MODEL))" \
 		--run-metadata-csv "$(PIPE_TETRAMER_FREQUENCIES_CSV)" \
 		--results-json
 

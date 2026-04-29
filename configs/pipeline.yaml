@@ -12,7 +12,6 @@ paths:
   results_scratch_dir: results/scratch
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
-  sequence_cache_parquet: outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet
   # CAP CSV layout from run_uc_cap_pipeline.py
   cap_csv_pattern: outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv
 
@@ -20,12 +19,6 @@ paths:
 tasks:
   - cancer_diagnosis
   - cancer_type
-
-# UC/CAP supervised models (fit_uc_cap_classifier.py, grid_uc_cap_classifier.py)
-uc_cap_classifiers:
-  - random_forest
-  - logistic_regression
-  - svm
 
 # Run-level tetramer pipeline: CLR → optional scaler → PCA → KNN (fit_tetramer_classifier.py).
 # Model name is fixed; hyperparameters are tuned from CLI defaults below.
@@ -39,40 +32,11 @@ tetramer:
   default_weights_grid: "uniform,distance"
   default_val_scoring: f1_weighted
 
-# Exact (n_uc, n_clusters, n_cap) triples used by scripts/grid_uc_cap_pipeline.py.
-# Values were transcribed from the prior shell grid.
-uc_cap_pipeline_grid:
-  - { n_uc: 2000, n_clusters: 1000, n_cap: 2000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 2000 }
-  - { n_uc: 500, n_clusters: 5000, n_cap: 2000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 2000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 2000 }
-  - { n_uc: 2000, n_clusters: 1000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 5000 }
-  - { n_uc: 500, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 500, n_clusters: 1000, n_cap: 10000 }
-  - { n_uc: 1000, n_clusters: 1000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 1000, n_cap: 10000 }
-  - { n_uc: 500, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 1000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 500, n_clusters: 5000, n_cap: 10000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
-
-# Subset used by scripts/grid_uc_cap_classifier.py for batch evaluation / markdown tables.
-# n_cap is only 5000 and 10000 here; n_uc is 1000 or 2000; n_clusters is 2000 or 5000.
-uc_cap_classifier_grid:
-  - { n_uc: 1000, n_clusters: 2000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 5000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 1000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
+# build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
+sequence_cache:
+  n_max_per_run: 1000
+  input_suffix: ".csv.xz"
+  parquet_compression: zstd
 
 # Defaults for run_uc_cap_pipeline.py (shared with Makefile / future wrappers).
 run_uc_cap_defaults:
@@ -87,8 +51,21 @@ run_uc_cap_defaults:
   max_iter: 200
   chunk_size: 20000
 
-# build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
-sequence_cache:
-  n_max_per_run: 10000
-  input_suffix: ".csv.xz"
-  parquet_compression: zstd
+# UC/CAP supervised models (fit_uc_cap_classifier.py, grid_uc_cap_classifier.py)
+uc_cap_classifiers:
+  - random_forest
+  - logistic_regression
+  - svm
+
+# Exact (n_uc, n_clusters, n_cap) triples used by scripts/grid_uc_cap_pipeline.py.
+# n_cap is only 5000 and 10000 here; n_uc is 1000 or 2000; n_clusters is 2000 or 5000.
+uc_cap_pipeline_grid:
+  - { n_uc: 10, n_clusters: 20, n_cap: 50 }
+  - { n_uc: 20, n_clusters: 20, n_cap: 50 }
+  - { n_uc: 10, n_clusters: 50, n_cap: 50 }
+  - { n_uc: 20, n_clusters: 50, n_cap: 50 }
+  - { n_uc: 10, n_clusters: 20, n_cap: 100 }
+  - { n_uc: 20, n_clusters: 20, n_cap: 100 }
+  - { n_uc: 10, n_clusters: 50, n_cap: 100 }
+  - { n_uc: 20, n_clusters: 50, n_cap: 100 }
+

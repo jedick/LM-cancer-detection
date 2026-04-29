@@ -54,20 +54,20 @@ See the table for an overview of all the steps and read below for details.
 |-----|--------|--------|
 | 1. Download | download_sra_data.py | `make download_data` |
 | 2. Tetramer counts | calculate_tetramer_frequencies.py | `make tetramer_frequencies` |
-| 3. Sequence cache | build_uc_cap_sequence_cache.py | `make sequence_cache` |
-| 4. Tetramer classifier | fit_tetramer_classifier.py | `make fit_knn TASK=cancer_diagnosis` |
-| 5. UC/CAP pipeline + classifier | run_uc_cap_pipeline.py + fit_uc_cap_classifier.py | `make fit_uc_cap TASK=cancer_diagnosis MODEL=random_forest N_UC=1000 N_CLUSTERS=2000 N_CAP=5000` |
-| 6. UC/CAP grid | grid_uc_cap_pipeline.py | `make grid_uc_cap` |
+| 3. Tetramer classifier | fit_tetramer_classifier.py | `make fit_tetramer TASK=cancer_diagnosis MODEL=knn` |
+| 4. Sequence cache | build_uc_cap_sequence_cache.py | `make sequence_cache` |
+| 5. UC/CAP pipeline grid | grid_uc_cap_pipeline.py | `make grid_uc_cap` |
+| 6. UC/CAP pipeline + classifier | run_uc_cap_pipeline.py + fit_uc_cap_classifier.py | `make fit_uc_cap TASK=cancer_diagnosis MODEL=random_forest N_UC=1000 N_CLUSTERS=2000 N_CAP=5000` |
 
 <details>
 <summary>Inputs/Outputs by step</summary>
 
 1. Download. Inputs: `data/**/*.csv`. Outputs: `fasta/<study>/<Run>.fasta.gz`.
 2. Tetramer counts. Inputs: `fasta/<study>/<Run>.fasta.gz`. Outputs: `outputs/tetramer_frequencies.csv`, `outputs/<cancer>/<study>/<Run>.csv.xz`.
-3. Sequence cache. Inputs: `outputs/<cancer>/<study>/<Run>.csv.xz`. Outputs: `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`.
-4. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: `results/scratch/fit_tetramer_classifier_*.json`.
-5. UC/CAP pipeline + classifier. Inputs: `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`, `outputs/tetramer_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
-6. UC/CAP grid. Inputs: `configs/pipeline.yaml`, `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` across the YAML grid.
+3. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: `results/scratch/fit_tetramer_classifier_*.json`.
+4. Sequence cache. Inputs: `outputs/<cancer>/<study>/<Run>.csv.xz`. Outputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`.
+6. UC/CAP pipeline grid. Inputs: `configs/pipeline.yaml`, `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` across the YAML grid.
+5. UC/CAP pipeline + classifier. Inputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`, `outputs/tetramer_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
 
 </details>
 
@@ -82,7 +82,8 @@ The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` hold **raw i
 
 ### Run-level tetramer classifier
 
-`fit_tetramer_classifier.py` fits a KNN classifier on `outputs/tetramer_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
+`fit_tetramer_classifier.py` fits run-level classifiers on `outputs/tetramer_frequencies.csv`, with optional CLR, scaling, PCA, and a stratified train/validation/test split; hyperparameters are chosen on the validation set.
+Supported models are `knn`, `random_forest`, and `logistic_regression` (selected via `--model` or `MODEL` in `make fit_tetramer`).
 The script supports two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
 We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `results/`.
 
