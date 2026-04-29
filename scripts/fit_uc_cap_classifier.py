@@ -283,6 +283,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _require_binary(y_train, "train split", args.task)
     _require_binary(y_val, "validation split", args.task)
     _require_binary(y_test, "test split", args.task)
+    y_all = np.concatenate((y_train, y_val, y_test))
 
     label_order = np.unique(y_train)
     label_to_int = {lab: i for i, lab in enumerate(label_order)}
@@ -300,15 +301,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     test_auc = _binary_roc_auc(clf, X_test, y_test_i)
     auc_str = f"{test_auc:.6f}" if np.isfinite(test_auc) else "nan"
 
-    print(f"CSV: {args.csv}", flush=True)
-    print(f"Task: {args.task}", flush=True)
-    print(f"Classifier: {args.classifier}", flush=True)
-    print(f"Features: {len(feature_cols)}", flush=True)
     print(
         f"Split sizes - train: {len(train_df)}, val: {len(val_df)}, test: {len(test_df)}",
         flush=True,
     )
-    print(f"Classes (encoded): {label_to_int}", flush=True)
+    class_labels, class_counts = np.unique(y_all, return_counts=True)
+    class_counts_dict = {
+        str(label): int(count) for label, count in zip(class_labels.tolist(), class_counts.tolist())
+    }
+    print(f"Class counts: {class_counts_dict}", flush=True)
     print(f"Validation accuracy: {val_acc:.6f}", flush=True)
     print(f"Test accuracy: {test_acc:.6f}", flush=True)
     print(f"Test ROC AUC: {auc_str}", flush=True)

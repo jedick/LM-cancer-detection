@@ -4,7 +4,7 @@ Build a cached sequence-level tetramer table for UC/CAP exploration.
 
 Reads per-run sequence tetramer count files from outputs/<cancer_type>/<study_name>/.
 Each input file must contain 256 integer columns (no header) with one row per sequence.
-Compressed .csv.xz files are expected by default.
+Compressed .csv.xz files are expected.
 
 Writes one Parquet file containing:
   - study_name
@@ -12,7 +12,7 @@ Writes one Parquet file containing:
   - sequence_index (1-based row index within the source run file)
   - 256 tetramer count columns (AAAA ... TTTT, lexicographic ACGT order)
 
-The script keeps only the first N rows from each run file (default: 10000).
+The script keeps only the first N rows from each run file (provided via --n-max).
 """
 
 from __future__ import annotations
@@ -29,19 +29,18 @@ import pandas as pd
 
 
 RUN_FILE_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
+INPUT_SUFFIX = ".csv.xz"
 TETRAMERS: Tuple[str, ...] = tuple(
     "".join(p) for p in itertools.product("ACGT", repeat=4)
 )
 
 
-def iter_run_files(
-    outputs_dir: Path, input_suffix: str
-) -> Iterable[Tuple[str, str, Path]]:
+def iter_run_files(outputs_dir: Path) -> Iterable[Tuple[str, str, Path]]:
     """Yield (study_name, run_accession, file_path) for run-level sequence count files."""
-    for path in sorted(outputs_dir.rglob(f"*{input_suffix}")):
+    for path in sorted(outputs_dir.rglob(f"*{INPUT_SUFFIX}")):
         if path.name.startswith("."):
             continue
-        run = path.name[: -len(input_suffix)]
+        run = path.name[: -len(INPUT_SUFFIX)]
         if not RUN_FILE_PATTERN.match(run):
             continue
         if len(path.parts) < 3:
@@ -62,22 +61,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help=(
-            "Output Parquet path (default: <repo>/outputs/uc_cap/"
-            "sequence_counts_first_10000_all_runs.parquet)."
-        ),
+        help="Output Parquet path (default: derived from --n-max under <repo>/outputs/uc_cap/).",
     )
     parser.add_argument(
         "--n-max",
         type=int,
-        default=10000,
-        help="Maximum number of sequences to keep per Run (default: 10000).",
-    )
-    parser.add_argument(
-        "--input-suffix",
-        type=str,
-        default=".csv.xz",
-        help="Suffix of per-run input files (default: .csv.xz).",
+        required=True,
+        help="Maximum number of sequences to keep per Run.",
     )
     parser.add_argument(
         "--compression",
@@ -99,7 +89,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     repo_root = script_dir.parent
     outputs_dir = args.outputs_dir or (repo_root / "outputs")
     output_path = args.output or (
-        outputs_dir / "uc_cap" / "sequence_counts_first_10000_all_runs.parquet"
+        outputs_dir / "uc_cap" / f"sequence_counts_first_{args.n_max}_all_runs.parquet"
     )
     parquet_compression = None if args.compression == "none" else args.compression
 
@@ -107,12 +97,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Error: outputs directory not found: {outputs_dir}", file=sys.stderr)
         return 1
 
-    run_files = list(iter_run_files(outputs_dir=outputs_dir, input_suffix=args.input_suffix))
+    run_files = list(iter_run_files(outputs_dir=outputs_dir))
     if not run_files:
         print(
             (
                 f"Error: no run files found in {outputs_dir} with suffix "
-                f"'{args.input_suffix}'"
+                f"'{INPUT_SUFFIX}'"
             ),
             file=sys.stderr,
         )
