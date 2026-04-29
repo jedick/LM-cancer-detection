@@ -1,13 +1,13 @@
-study_name,study_year,cancer_type,n_cancer,n_healthy,ncbi_bioproject,partition,notes
-AAM+13,2013,breast,29,32,PRJNA396901,development,"Use only fecal samples (not sigmoid)"
-GHB+18,2018,breast,48,48,PRJNA383849,development,"Use only ""Pre"" samples (i.e. Unsorted by IgA)"
-BVW+21,2021,breast,403,442,PRJNA658160,development,"Labels: ""1)Invasive"" for cancer and ""not provided"" for control"
-WZK+22,2022,breast,54,25,PRJNA804967,development,
-ZZZ+22,2022,breast,14,14,PRJNA726050,holdout,
-SKC+23,2023,breast,22,21,PRJNA872152,holdout,
-BYZ+13,2013,colorectal,6,6,PRJNA222611,development,
-ZTV+14,2014,colorectal,41,75,PRJEB6070,development,
-BRRS16,2016,colorectal,127,134,PRJNA290926,development,
-YWS+21,2021,colorectal,53,52,PRJEB36789,development,"Labels: ""Healthy volunteer"" for control (not ""UK control"")"
-BRR+24,2024,colorectal,51,54,PRJEB71787,holdout,"Labels from Zenodo file"
-ARF+25,2025,colorectal,25,15,PRJEB76625,holdout,"Labels from SI"
+study_name,study_year,doi,cancer_type,n_cancer,n_healthy,ncbi_bioproject,partition,notes
+AAM+13,2013,10.14309/00000434-201310001-00625,breast,29,32,PRJNA396901,development,"Used only fecal samples (not sigmoid)"
+GHB+18,2018,10.1038/bjc.2017.435,breast,48,48,PRJNA383849,development,"Used only ""Pre"" samples (i.e. Unsorted by IgA)"
+BVW+21,2021,10.1002/ijc.33473,breast,403,442,PRJNA658160,development,"Labels: ""1)Invasive"" for cancer and ""not provided"" for control"
+WZK+22,2022,10.3389/fmicb.2022.894283,breast,54,25,PRJNA804967,development,
+ZZZ+22,2022,10.1111/jam.15620,breast,14,14,PRJNA726050,holdout,
+SKC+23,2023,10.1038/s41598-023-27436-3,breast,22,21,PRJNA872152,holdout,
+BYZ+13,2013,10.1371/journal.pone.0081352,colorectal,6,6,PRJNA222611,development,
+ZTV+14,2014,10.15252/msb.20145645,colorectal,41,75,PRJEB6070,development,
+BRRS16,2016,10.1186/s13073-016-0290-3,colorectal,127,134,PRJNA290926,development,
+YWS+21,2021,10.1186/s13073-021-00844-8,colorectal,53,52,PRJEB36789,development,"Labels: ""Healthy volunteer"" for control (not ""UK control"")"
+BRR+24,2024,10.1186/s12864-024-10621-7,colorectal,51,54,PRJEB71787,holdout,"Labels from Zenodo file"
+ARF+25,2025,10.3389/fmicb.2025.1449642,colorectal,25,15,PRJEB76625,holdout,"Labels from SI"
