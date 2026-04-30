@@ -1,96 +1,59 @@
-# Run from the repository root. Paths and defaults load from configs/pipeline.yaml
-# via scripts/pipeline_emit_mk.py (requires PyYAML).
+# Run from the repository root. Paths/defaults come from configs/pipeline.yaml.
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PYTHON ?= python3
-PIPELINE_CFG := $(ROOT)/configs/pipeline.yaml
-PIPE_EMIT := $(ROOT)/scripts/pipeline_emit_mk.py
+CONFIG := $(ROOT)/configs/pipeline.yaml
 
-# $(shell ...) collapses newlines; load each path with --get (requires PyYAML).
-ifeq ($(shell $(PYTHON) -c "import yaml" >/dev/null 2>&1 && echo ok),ok)
-PIPE_DATA_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.data_dir)
-PIPE_FASTA_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.fasta_dir)
-PIPE_OUTPUTS_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.outputs_dir)
-PIPE_RESULTS_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.results_dir)
-PIPE_RESULTS_SCRATCH_DIR := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.results_scratch_dir)
-PIPE_TETRAMER_FREQUENCIES_CSV := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.tetramer_frequencies_csv)
-PIPE_UC_CAP_ROOT := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get paths.uc_cap_root)
-PIPE_DEFAULT_TASK := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get tetramer.default_task)
-PIPE_DEFAULT_UC_CAP_CLASSIFIER := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get uc_cap_classifiers.0)
-PIPE_SEQUENCE_CACHE_N_MAX := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get sequence_cache.n_max_per_run)
-PIPE_SEQUENCE_CACHE_COMPRESSION := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get sequence_cache.parquet_compression)
-PIPE_UCAP_RANDOM_STATE := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.random_state)
-PIPE_UCAP_PCA_VARIANCE := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.pca_variance)
-PIPE_UCAP_PCA_COMPONENTS := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.pca_components)
-PIPE_UCAP_SEQ_NORMALIZE := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.seq_normalize)
-PIPE_UCAP_SEQ_LOG1P := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.seq_log1p)
-PIPE_UCAP_CAP_TRANSFORM := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.cap_transform)
-PIPE_UCAP_CLR_PSEUDOCOUNT := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.clr_pseudocount)
-PIPE_UCAP_BATCH_SIZE := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.batch_size)
-PIPE_UCAP_MAX_ITER := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.max_iter)
-PIPE_UCAP_CHUNK_SIZE := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --get run_uc_cap_defaults.chunk_size)
-else
-$(error PyYAML is required for the Makefile (pip install pyyaml))
-endif
+define yaml_section_value
+$(strip $(shell awk -F': *' 'BEGIN{inside=0} $$1=="$(1)"{inside=1; next} inside && $$0 !~ /^  /{inside=0} inside && $$1=="  $(2)"{print $$2; exit}' "$(CONFIG)"))
+endef
 
-# Optional overrides for build_uc_cap_sequence_cache.py (defaults come from YAML).
-SEQ_N_MAX ?= $(PIPE_SEQUENCE_CACHE_N_MAX)
-SEQ_COMPRESSION ?= $(PIPE_SEQUENCE_CACHE_COMPRESSION)
+DATA_DIR := $(call yaml_section_value,paths,data_dir)
+TETRAMER_FREQUENCIES_CSV := $(call yaml_section_value,paths,tetramer_frequencies_csv)
+UC_CAP_ROOT := $(call yaml_section_value,paths,uc_cap_root)
+SEQUENCE_CACHE_N_MAX := $(call yaml_section_value,sequence_cache,n_max_per_run)
 
-# Task / model / UC-CAP triple (override on command line, e.g. make fit_tetramer TASK=cancer_type MODEL=knn).
-TASK ?= $(PIPE_DEFAULT_TASK)
-MODEL ?=
-UCAP_MODEL ?= $(PIPE_DEFAULT_UC_CAP_CLASSIFIER)
-N_UC ?= 1000
-N_CLUSTERS ?= 2000
-N_CAP ?= 5000
-
-TETRA_CSV := $(ROOT)/$(PIPE_TETRAMER_FREQUENCIES_CSV)
-SEQ_CACHE := $(ROOT)/$(PIPE_UC_CAP_ROOT)/sequence_counts_first_$(SEQ_N_MAX)_all_runs.parquet
-CAP_CSV_REL := $(shell $(PYTHON) $(PIPE_EMIT) $(PIPELINE_CFG) --render-cap-csv --n-uc $(N_UC) --n-clusters $(N_CLUSTERS) --n-cap $(N_CAP))
-CAP_CSV := $(ROOT)/$(CAP_CSV_REL)
-
-UCAP_PCA_COMPONENTS_ARG := $(if $(strip $(PIPE_UCAP_PCA_COMPONENTS)),--pca-components $(PIPE_UCAP_PCA_COMPONENTS),)
-UCAP_NO_SEQ_NORMALIZE_ARG := $(if $(filter false 0 no,$(PIPE_UCAP_SEQ_NORMALIZE)),--no-seq-normalize,)
-UCAP_SEQ_LOG1P_ARG := $(if $(filter true 1 yes,$(PIPE_UCAP_SEQ_LOG1P)),--seq-log1p,)
+TETRA_CSV := $(ROOT)/$(TETRAMER_FREQUENCIES_CSV)
+SEQ_CACHE := $(ROOT)/$(UC_CAP_ROOT)/sequence_counts_first_$(SEQUENCE_CACHE_N_MAX)_all_runs.parquet
 
 # Study metadata CSVs (typically small); used to rebuild tetramer frequencies when data change.
-DATA_CSVS := $(shell find $(ROOT)/$(PIPE_DATA_DIR) -type f -name '*.csv' 2>/dev/null)
+DATA_CSVS := $(shell find $(ROOT)/$(DATA_DIR) -type f -name '*.csv' 2>/dev/null)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help download_data tetramer_frequencies sequence_cache fit_tetramer fit_uc_cap grid_uc_cap
+.PHONY: help download_data tetramer_frequencies sequence_cache fit_tetramer fit_uc_cap grid_uc_cap explain explain-%
 
 help:
-	@echo "LM-cancer-detection Makefile (paths from configs/pipeline.yaml)"
+	@echo "LM-cancer-detection Makefile (script defaults from configs/pipeline.yaml)"
 	@echo ""
 	@echo "  make download_data"
-	@echo "      Run scripts/download_sra_data.py (reads $(PIPE_DATA_DIR)/**/*.csv,"
-	@echo "      writes $(PIPE_FASTA_DIR)/<study>/<Run>.fasta.gz)."
+	@echo "      Run scripts/download_sra_data.py."
 	@echo ""
 	@echo "  make tetramer_frequencies"
-	@echo "      Append missing Run rows to $(PIPE_TETRAMER_FREQUENCIES_CSV) and"
-	@echo "      create missing per-run sequence count files under $(PIPE_OUTPUTS_DIR)/"
+	@echo "      Append missing Run rows to tetramer frequencies CSV and"
+	@echo "      create missing per-run sequence count files under outputs/."
 	@echo "      (depends on data CSVs). Existing rows/files are left unchanged."
-	@echo "      FASTA inputs under $(PIPE_FASTA_DIR)/ are not listed as prerequisites"
+	@echo "      FASTA inputs are not listed as prerequisites"
 	@echo "      (avoids huge dep lists); delete the CSV output to force a rebuild."
 	@echo ""
 	@echo "  make sequence_cache"
 	@echo "      Build $(SEQ_CACHE) via build_uc_cap_sequence_cache.py."
-	@echo "      Defaults from YAML: n_max=$(PIPE_SEQUENCE_CACHE_N_MAX)"
-	@echo "      compression=$(PIPE_SEQUENCE_CACHE_COMPRESSION)"
 	@echo ""
-	@echo "  make fit_tetramer [TASK=$(PIPE_DEFAULT_TASK)] [MODEL=knn|random_forest|logistic_regression]"
-	@echo "      Run fit_tetramer_classifier.py; JSON -> $(PIPE_RESULTS_SCRATCH_DIR)/"
-	@echo "      (use --results-json with no path, see script help)."
+	@echo "  make fit_tetramer"
+	@echo "      Run fit_tetramer_classifier.py with script defaults;"
+	@echo "      JSON -> results/scratch/ via --results-json."
 	@echo ""
-	@echo "  make fit_uc_cap [TASK=...] [MODEL=...] [N_UC=...] [N_CLUSTERS=...] [N_CAP=...]"
-	@echo "      Build CAP CSV if missing, then fit_uc_cap_classifier.py; JSON -> scratch."
-	@echo "      Defaults: TASK=$(PIPE_DEFAULT_TASK) MODEL=$(PIPE_DEFAULT_UC_CAP_CLASSIFIER)"
-	@echo "      N_UC=1000 N_CLUSTERS=2000 N_CAP=5000"
+	@echo "  make fit_uc_cap"
+	@echo "      Run fit_uc_cap_classifier.py with script defaults;"
+	@echo "      use script CLI directly for non-default settings."
 	@echo ""
 	@echo "  make grid_uc_cap"
 	@echo "      Run scripts/grid_uc_cap_pipeline.py (grid from pipeline.yaml)."
+	@echo ""
+	@echo "  make explain TARGET=<make_target>"
+	@echo "      Compact dependency/mtime explanation using make --trace."
+	@echo "      Examples: make explain TARGET=sequence_cache"
+	@echo "                make explain-sequence_cache"
 	@echo ""
 
 $(TETRA_CSV): $(DATA_CSVS) $(ROOT)/scripts/calculate_tetramer_frequencies.py \
@@ -102,10 +65,7 @@ tetramer_frequencies: $(TETRA_CSV)
 	@echo "Up to date: $(TETRA_CSV)"
 
 $(SEQ_CACHE): $(TETRA_CSV) $(ROOT)/scripts/build_uc_cap_sequence_cache.py
-	cd "$(ROOT)" && $(PYTHON) scripts/build_uc_cap_sequence_cache.py \
-		--output "$(SEQ_CACHE)" \
-		--n-max "$(SEQ_N_MAX)" \
-		--compression "$(SEQ_COMPRESSION)"
+	cd "$(ROOT)" && $(PYTHON) scripts/build_uc_cap_sequence_cache.py --output "$(SEQ_CACHE)"
 
 sequence_cache: $(SEQ_CACHE)
 	@echo "Up to date: $(SEQ_CACHE)"
@@ -115,33 +75,27 @@ download_data:
 
 fit_tetramer: $(TETRA_CSV)
 	cd "$(ROOT)" && $(PYTHON) scripts/fit_tetramer_classifier.py \
-		--model "$(if $(strip $(MODEL)),$(MODEL),knn)" \
-		--task "$(TASK)" \
-		--csv "$(PIPE_TETRAMER_FREQUENCIES_CSV)" \
+		--csv "$(TETRAMER_FREQUENCIES_CSV)" \
 		--results-json
 
 fit_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
-	@if ! test -f "$(CAP_CSV)"; then \
-		echo "Building missing $(CAP_CSV)"; \
-		cd "$(ROOT)" && $(PYTHON) scripts/run_uc_cap_pipeline.py \
-			--n-uc $(N_UC) --n-clusters $(N_CLUSTERS) --n-cap $(N_CAP) \
-			--random-state "$(PIPE_UCAP_RANDOM_STATE)" \
-			--pca-variance "$(PIPE_UCAP_PCA_VARIANCE)" \
-			$(UCAP_PCA_COMPONENTS_ARG) \
-			$(UCAP_NO_SEQ_NORMALIZE_ARG) \
-			$(UCAP_SEQ_LOG1P_ARG) \
-			--cap-transform "$(PIPE_UCAP_CAP_TRANSFORM)" \
-			--clr-pseudocount "$(PIPE_UCAP_CLR_PSEUDOCOUNT)" \
-			--batch-size "$(PIPE_UCAP_BATCH_SIZE)" \
-			--max-iter "$(PIPE_UCAP_MAX_ITER)" \
-			--chunk-size "$(PIPE_UCAP_CHUNK_SIZE)"; \
-	fi
+	cd "$(ROOT)" && $(PYTHON) scripts/run_uc_cap_pipeline.py
 	cd "$(ROOT)" && $(PYTHON) scripts/fit_uc_cap_classifier.py \
-		--csv "$(CAP_CSV_REL)" \
-		--task "$(TASK)" \
-		--classifier "$(if $(strip $(MODEL)),$(MODEL),$(UCAP_MODEL))" \
-		--run-metadata-csv "$(PIPE_TETRAMER_FREQUENCIES_CSV)" \
+		--run-metadata-csv "$(TETRAMER_FREQUENCIES_CSV)" \
 		--results-json
 
 grid_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
 	cd "$(ROOT)" && $(PYTHON) scripts/grid_uc_cap_pipeline.py
+
+TARGET ?=
+
+explain:
+	@if test -z "$(TARGET)"; then \
+		echo "Usage: make explain TARGET=<make_target>"; \
+		echo "   or: make explain-<make_target>"; \
+		exit 2; \
+	fi
+	cd "$(ROOT)" && $(PYTHON) scripts/explain_make_trace.py "$(TARGET)"
+
+explain-%:
+	cd "$(ROOT)" && $(PYTHON) scripts/explain_make_trace.py "$*"

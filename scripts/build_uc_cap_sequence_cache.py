@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
+import yaml
 
 
 RUN_FILE_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
@@ -50,33 +51,57 @@ def iter_run_files(outputs_dir: Path) -> Iterable[Tuple[str, str, Path]]:
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    repo_root = Path(__file__).resolve().parent.parent
+    default_config_path = repo_root / "configs" / "pipeline.yaml"
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument("--config", type=Path, default=default_config_path)
+    bootstrap_args, _ = bootstrap.parse_known_args(list(argv) if argv is not None else None)
+    config_path = bootstrap_args.config
+    try:
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        default_n_max = int(cfg["sequence_cache"]["n_max_per_run"])
+        default_outputs_dir = repo_root / str(cfg["paths"]["outputs_dir"]).strip()
+        default_uc_cap_root = repo_root / str(cfg["paths"]["uc_cap_root"]).strip()
+        default_compression = str(cfg["sequence_cache"]["parquet_compression"]).strip()
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Invalid pipeline config defaults in {config_path}: {exc}") from exc
+
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=config_path,
+        help="Path to pipeline.yaml (default: <repo>/configs/pipeline.yaml).",
+    )
     parser.add_argument(
         "--outputs-dir",
         type=Path,
-        default=None,
-        help="Root directory containing per-run sequence count files (default: <repo>/outputs).",
+        default=default_outputs_dir,
+        help="Root directory containing per-run sequence count files (default: from pipeline config).",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=None,
-        help="Output Parquet path (default: derived from --n-max under <repo>/outputs/uc_cap/).",
+        help="Output Parquet path (default: derived from --n-max under configured uc_cap_root).",
     )
     parser.add_argument(
         "--n-max",
         type=int,
-        required=True,
-        help="Maximum number of sequences to keep per Run.",
+        default=default_n_max,
+        help="Maximum number of sequences to keep per Run (default: from pipeline config).",
     )
     parser.add_argument(
         "--compression",
         type=str,
-        default="zstd",
+        default=default_compression,
         choices=("zstd", "snappy", "gzip", "brotli", "lz4", "none"),
-        help="Parquet compression codec (default: zstd).",
+        help="Parquet compression codec (default: from pipeline config).",
     )
-    return parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.output is None:
+        args.output = default_uc_cap_root / f"sequence_counts_first_{args.n_max}_all_runs.parquet"
+    return args
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -85,12 +110,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("--n-max must be a positive integer", file=sys.stderr)
         return 1
 
-    script_dir = Path(__file__).resolve().parent
-    repo_root = script_dir.parent
-    outputs_dir = args.outputs_dir or (repo_root / "outputs")
-    output_path = args.output or (
-        outputs_dir / "uc_cap" / f"sequence_counts_first_{args.n_max}_all_runs.parquet"
-    )
+    outputs_dir = args.outputs_dir
+    output_path = args.output
     parquet_compression = None if args.compression == "none" else args.compression
 
     if not outputs_dir.is_dir():
