@@ -55,7 +55,7 @@ def _repo_root() -> Path:
 
 
 def _default_config_path() -> Path:
-    return _repo_root() / "configs" / "pipeline.yaml"
+    return _repo_root() / "defaults.yaml"
 
 
 def _resolve_repo_path(raw: object) -> Path:

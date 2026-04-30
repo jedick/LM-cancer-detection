@@ -1,0 +1,107 @@
+# Central description of pipeline parameters and defaults used across scripts.
+# Paths are relative to the repository root unless noted.
+# Scripts load defaults from this file; some experiment runners may overlay values from experiments.yaml.
+# Keep values here as the single source of truth for pipeline defaults.
+
+paths:
+  data_dir: data
+  fasta_dir: fasta
+  outputs_dir: outputs
+  results_dir: results
+  # Ephemeral / local experiment outputs (gitignored); finalized copies go under results/
+  results_scratch_dir: results/scratch
+  datasets_csv: datasets.csv
+  tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
+  uc_cap_root: outputs/uc_cap
+  # CAP CSV layout from run_uc_cap_pipeline.py
+  cap_csv_pattern: outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv
+
+# Canonical Run -> train/val/test/holdout assignment (scripts/shared_splits.py).
+shared_splits:
+  random_state: 0
+
+# Run-level tetramer pipeline defaults.
+# The script now takes only --expt and resolves all values from this section,
+# then applies per-experiment overrides from experiments.yaml.
+fit_tetramer_classifier:
+  label_column: null
+  model: knn
+  task: cancer_diagnosis
+  random_state: 0
+  use_scaler: true
+  use_clr: true
+  clr_pseudocount: 1.0e-6
+  pca_min_variance: 0.9
+  n_neighbors_grid: "5,15"
+  weights_grid: "uniform,distance"
+  rf_n_estimators_grid: "200,500"
+  rf_max_depth_grid: "none,10"
+  rf_min_samples_leaf_grid: "1,2"
+  lr_c_grid: "0.1,1.0,10.0"
+  lr_solver_grid: "lbfgs,liblinear"
+  lr_class_weight_grid: "none,balanced"
+  val_scoring: f1_weighted
+  baselines: false
+  results_json: null
+
+# Help text for fit_tetramer_classifier.py options and configurable fields.
+fit_tetramer_classifier_help:
+  expt: "Optional 1-based experiment index from experiments.yaml. If omitted, use defaults only."
+  csv: "Path to tetramer frequency CSV."
+  label_column: "Target label column (default auto-detects sample_labels/sample_label)."
+  model: "Classifier family: knn, random_forest, or logistic_regression."
+  task: "Binary task: cancer_diagnosis or cancer_type."
+  random_state: "Random seed for PCA and model initialization."
+  scoring: "Validation metric to maximize during hyperparameter tuning."
+  use_scaler: "Whether StandardScaler is applied before PCA."
+  use_clr: "Whether CLR is applied before scaler/PCA."
+  clr_pseudocount: "Additive constant before log in CLR."
+  pca_min_variance: "Minimum cumulative explained variance for PCA candidate grid."
+  n_neighbors_grid: "Comma-separated KNN n_neighbors grid."
+  weights_grid: "Comma-separated KNN weights grid."
+  rf_n_estimators_grid: "Comma-separated random forest n_estimators grid."
+  rf_max_depth_grid: "Comma-separated random forest max_depth grid (use 'none')."
+  rf_min_samples_leaf_grid: "Comma-separated random forest min_samples_leaf grid."
+  lr_c_grid: "Comma-separated logistic regression C grid."
+  lr_solver_grid: "Comma-separated logistic regression solver grid."
+  lr_class_weight_grid: "Comma-separated logistic regression class_weight grid."
+  baselines: "Whether to print majority and stratified baseline test ROC AUC."
+  results_json: "Optional output path for metrics JSON; null disables JSON output."
+
+# build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
+sequence_cache:
+  n_max_per_run: 10000
+  input_suffix: ".csv.xz"
+  parquet_compression: zstd
+
+# Defaults for run_uc_cap_pipeline.py.
+run_uc_cap_defaults:
+  random_state: 0
+  pca_variance: 0.95
+  pca_components: null
+  seq_normalize: true
+  seq_log1p: false
+  cap_transform: none
+  clr_pseudocount: 1.0e-6
+  batch_size: 8192
+  max_iter: 200
+  chunk_size: 20000
+
+# UC/CAP supervised models (fit_uc_cap_classifier.py, grid_uc_cap_classifier.py)
+uc_cap_classifiers:
+  - random_forest
+  - logistic_regression
+  - svm
+
+# Exact (n_uc, n_clusters, n_cap) triples used by scripts/grid_uc_cap_pipeline.py.
+# n_uc is 1000 or 2000; n_clusters is 2000 or 5000; n_cap is 5000 or 10000.
+uc_cap_pipeline_grid:
+  - { n_uc: 1000, n_clusters: 2000, n_cap: 5000 }
+  - { n_uc: 2000, n_clusters: 2000, n_cap: 5000 }
+  - { n_uc: 1000, n_clusters: 5000, n_cap: 5000 }
+  - { n_uc: 2000, n_clusters: 5000, n_cap: 5000 }
+  - { n_uc: 1000, n_clusters: 2000, n_cap: 10000 }
+  - { n_uc: 2000, n_clusters: 2000, n_cap: 10000 }
+  - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
+  - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
+

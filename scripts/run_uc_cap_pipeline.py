@@ -273,7 +273,7 @@ def load_run_metadata(path: Path) -> Optional[pd.DataFrame]:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
-    default_config_path = root / "configs" / "pipeline.yaml"
+    default_config_path = root / "defaults.yaml"
     bootstrap = argparse.ArgumentParser(add_help=False)
     bootstrap.add_argument("--config", type=Path, default=default_config_path)
     bootstrap_args, _ = bootstrap.parse_known_args(list(argv) if argv is not None else None)
@@ -309,13 +309,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--config",
         type=Path,
         default=config_path,
-        help="Path to pipeline.yaml (used to derive default cache parquet path).",
+        help="Path to defaults.yaml (used to derive default cache parquet path).",
     )
     parser.add_argument(
         "--cache-parquet",
         type=Path,
         default=None,
-        help="Cache Parquet with sequence-level tetramer counts (default: derived from pipeline.yaml).",
+        help="Cache Parquet with sequence-level tetramer counts (default: derived from defaults.yaml).",
     )
     parser.add_argument(
         "--outputs-dir",

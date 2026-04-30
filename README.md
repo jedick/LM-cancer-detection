@@ -41,9 +41,9 @@ Samples labeled as `benign` and non-fecal samples in some studies are excluded f
 Install script dependencies from the repository root: `pip install -r requirements.txt`.
 
 This project is organized as a Makefile-driven analysis pipeline. Paths and default
-parameters are stored in `configs/pipeline.yaml`, and scripts load those defaults
+parameters are stored in `defaults.yaml`, and scripts load those defaults
 directly. `Makefile` provides convenience targets for the common pipeline steps.
-The `configs/datasets.csv` file identifies development and holdout studies in the
+The `datasets.csv` file identifies development and holdout studies in the
 `partition` column. Train/val/test splits are taken only from development studies,
 and metrics are calculated separately for test (development) and holdout studies.
 
@@ -59,7 +59,7 @@ See the table for an overview of all the steps and read below for details.
 | 5. UC/CAP pipeline grid | grid_uc_cap_pipeline.py | `make grid_uc_cap` |
 | 6. UC/CAP pipeline + classifier | run_uc_cap_pipeline.py + fit_uc_cap_classifier.py | `make fit_uc_cap` |
 
-For non-default settings, run the Python scripts directly and pass CLI flags.
+For non-default settings, use Makefile variables (for example `EXPT=...`) or run scripts directly with their supported options.
 
 If you want to see why Make would rebuild a target (including recursive prerequisite chains), use `make explain-<target>`.
 For example, run `make explain-grid_uc_cap`; replace the part after `explain-` with any Make target name.
@@ -69,9 +69,9 @@ For example, run `make explain-grid_uc_cap`; replace the part after `explain-` w
 
 1. Download. Inputs: `data/**/*.csv`. Outputs: `fasta/<study>/<Run>.fasta.gz`.
 2. Tetramer counts. Inputs: `fasta/<study>/<Run>.fasta.gz`. Outputs: `outputs/tetramer_frequencies.csv`, `outputs/<cancer>/<study>/<Run>.csv.xz`.
-3. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: `results/scratch/fit_tetramer_classifier_*.json`.
+3. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: default run (`make fit_tetramer`) writes `results/scratch/fit_tetramer_classifier_*.json`; experiment runs (`make fit_tetramer EXPT=N`) write `results/tetramer/{name}.json`.
 4. Sequence cache. Inputs: `outputs/<cancer>/<study>/<Run>.csv.xz`. Outputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`.
-5. UC/CAP pipeline grid. Inputs: `configs/pipeline.yaml`, `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` across the YAML grid.
+5. UC/CAP pipeline grid. Inputs: `defaults.yaml`, `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` across the YAML grid.
 6. UC/CAP pipeline + classifier. Inputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`, `outputs/tetramer_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
 
 </details>
@@ -89,9 +89,10 @@ The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` hold **raw i
 
 `fit_tetramer_classifier.py` fits run-level classifiers on `outputs/tetramer_frequencies.csv`, with optional CLR, scaling, and PCA.
 Shared split logic assigns each run to train, validation, test, or holdout; hyperparameters are chosen on validation, then ROC AUC is reported for test and holdout.
-Supported models are `knn`, `random_forest`, and `logistic_regression` (selected via `--model` when running the script directly).
-The script supports two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
-We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `results/`.
+Supported models are `knn`, `random_forest`, and `logistic_regression`; the script takes optional `--expt` and resolves task/model plus other settings from `defaults.yaml` and `experiments.yaml` (or uses defaults only when `--expt` is omitted).
+The binary tasks are cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal), selected by the active experiment entry.
+The default run (`make fit_tetramer`) writes timestamped JSON to `results/scratch/fit_tetramer_classifier_*.json`; experiment runs write per-experiment JSON to `results/tetramer/{name}.json`.
+Use `make fit_tetramer EXPT=1` to run a single configured experiment and `make fit_tetramer EXPT=0` to run all configured experiments. The `EXPT=0` path uses Make targets for each experiment output, so rebuilds are incremental (only missing or stale outputs are rerun), and you can add `-j` for parallel execution (for example, `make -j4 fit_tetramer EXPT=0`).
 
 ### Unsupervised Clustering with Cluster Abundance Profiling
 
@@ -102,4 +103,4 @@ This stage takes the sequence-level tetramer count files described above.
 - `run_uc_cap_pipeline.py` performs unsupervised clustering on a subset of cached rows (`n_uc`) and then assigns a larger subset of sequences (`n_cap`) to the learned cluster centroids, producing run-level cluster abundance profiles.
   Its main output is `outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv`, where each row is a sequencing run and the `cluster_*` columns are normalized per-run abundances used as features for downstream classification.
 - `fit_uc_cap_classifier.py` uses the features generated by the pipeline and the same shared run splits to fit classification models.
-- `grid_uc_cap_pipeline.py` runs the pipeline for different combinations of parameters from `configs/pipeline.yaml`. Then `grid_uc_cap_classifier.py` uses the features generated by the pipeline to run the classifier with different models for the two tasks.
+- `grid_uc_cap_pipeline.py` runs the pipeline for different combinations of parameters from `defaults.yaml`. Then `grid_uc_cap_classifier.py` uses the features generated by the pipeline to run the classifier with different models for the two tasks.

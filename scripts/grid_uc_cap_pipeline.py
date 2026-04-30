@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run run_uc_cap_pipeline.py for each uc_cap_pipeline_grid entry in configs/pipeline.yaml."""
+"""Run run_uc_cap_pipeline.py for each uc_cap_pipeline_grid entry in defaults.yaml."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--config",
         type=Path,
-        default=root / "configs" / "pipeline.yaml",
-        help="Path to pipeline.yaml (default: <repo>/configs/pipeline.yaml).",
+        default=root / "defaults.yaml",
+        help="Path to defaults.yaml (default: <repo>/defaults.yaml).",
     )
     p.add_argument(
         "--dry-run",

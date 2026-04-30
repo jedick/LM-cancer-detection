@@ -52,7 +52,7 @@ def iter_run_files(outputs_dir: Path) -> Iterable[Tuple[str, str, Path]]:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parent.parent
-    default_config_path = repo_root / "configs" / "pipeline.yaml"
+    default_config_path = repo_root / "defaults.yaml"
     bootstrap = argparse.ArgumentParser(add_help=False)
     bootstrap.add_argument("--config", type=Path, default=default_config_path)
     bootstrap_args, _ = bootstrap.parse_known_args(list(argv) if argv is not None else None)
@@ -71,7 +71,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--config",
         type=Path,
         default=config_path,
-        help="Path to pipeline.yaml (default: <repo>/configs/pipeline.yaml).",
+        help="Path to defaults.yaml (default: <repo>/defaults.yaml).",
     )
     parser.add_argument(
         "--outputs-dir",

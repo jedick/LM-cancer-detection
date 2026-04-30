@@ -7,9 +7,9 @@ alwaysApply: true
 
 ## Source of truth and execution entrypoint
 
-- Treat **`configs/pipeline.yaml`** as the source of truth for pipeline paths and default parameters.
+- Treat **`defaults.yaml`** as the source of truth for pipeline paths and default parameters.
 - Prefer running pipeline steps via **`Makefile` targets** (`download_data`, `tetramer_frequencies`, `sequence_cache`, `fit_tetramer`, `fit_uc_cap`, `grid_uc_cap`) instead of ad hoc script commands in docs and guidance.
-- Avoid hardcoding pipeline paths/defaults in multiple places; when a path/parameter changes in `configs/pipeline.yaml`, update Makefile wiring and README pipeline references in the same change.
+- Avoid hardcoding pipeline paths/defaults in multiple places; when a path/parameter changes in `defaults.yaml`, update Makefile wiring and README pipeline references in the same change.
 
 ## Sample identity and FASTA files
 
@@ -25,7 +25,7 @@ alwaysApply: true
 ## Shared split assignment
 
 - Treat **`scripts/shared_splits.py`** as the source of truth for assigning each **`Run`** to exactly one of **`train`**, **`val`**, **`test`**, or **`holdout`**.
-- Split configuration belongs in **`configs/pipeline.yaml`** (`paths.datasets_csv`, `shared_splits.random_state`). Callers should not pass datasets paths or split random states around unless there is a deliberate reason to override the shared contract.
+- Split configuration belongs in **`defaults.yaml`** (`paths.datasets_csv`, `shared_splits.random_state`). Callers should not pass datasets paths or split random states around unless there is a deliberate reason to override the shared contract.
 - Downstream scripts should consume a single split value per run instead of maintaining separate development/holdout partition arrays and train/val/test split arrays.
 - For small run-level metadata tables, prefer **pandas** table operations when they make data loading, joins, and split assignment easier to read.
 

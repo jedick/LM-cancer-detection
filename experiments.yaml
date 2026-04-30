@@ -1,0 +1,22 @@
+fit_tetramer_classifier:
+  results_json_template: results/tetramer/{name}.json
+  experiments:
+    - name: cancer_diagnosis_knn
+      overrides:
+        task: cancer_diagnosis
+        model: knn
+
+    - name: cancer_diagnosis_random_forest
+      overrides:
+        task: cancer_diagnosis
+        model: random_forest
+
+    - name: cancer_type_knn
+      overrides:
+        task: cancer_type
+        model: knn
+
+    - name: cancer_type_random_forest
+      overrides:
+        task: cancer_type
+        model: random_forest

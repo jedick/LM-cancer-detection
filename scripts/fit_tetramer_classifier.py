@@ -22,6 +22,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
@@ -92,165 +93,131 @@ class EvaluationResult:
     holdout_auc: float
 
 
-# ----- CLI -----
+# ----- Config loading -----
 
 
-def parse_args(argv: Optional[Sequence[str]], root: Path) -> argparse.Namespace:
-    config_path = root / "configs" / "pipeline.yaml"
+def parse_experiment_arg(argv: Optional[Sequence[str]], root: Path) -> int:
+    defaults_path = root / "defaults.yaml"
     try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        tet_cfg = cfg["tetramer"]
-        paths_cfg = cfg["paths"]
-        default_csv = root / str(paths_cfg["tetramer_frequencies_csv"]).strip()
-        default_model = str(tet_cfg["model"]).strip()
-        default_task = str(tet_cfg["task"]).strip()
-        default_random_state = int(tet_cfg["random_state"])
-        default_scoring = str(tet_cfg["val_scoring"]).strip()
-        default_clr_pseudocount = float(tet_cfg["clr_pseudocount"])
-        default_pca_min_variance = float(tet_cfg["pca_min_variance"])
-        default_n_neighbors_grid = str(tet_cfg["n_neighbors_grid"]).strip()
-        default_weights_grid = str(tet_cfg["weights_grid"]).strip()
-    except (OSError, KeyError, TypeError, ValueError) as exc:
-        raise SystemExit(f"Invalid pipeline config defaults in {config_path}: {exc}") from exc
+        cfg = yaml.safe_load(defaults_path.read_text(encoding="utf-8"))
+        help_text = str(
+            cfg.get("fit_tetramer_classifier_help", {}).get(
+                "expt",
+                "1-based experiment index from experiments.yaml.",
+            )
+        )
+    except OSError as exc:
+        raise SystemExit(f"Cannot read defaults file {defaults_path}: {exc}") from exc
 
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expt", type=int, default=None, help=help_text)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.expt is not None and args.expt <= 0:
+        raise SystemExit("--expt must be a positive integer (1-based index).")
+    return int(args.expt) if args.expt is not None else 0
 
-    inputs = parser.add_argument_group("input files")
-    inputs.add_argument(
-        "--csv",
-        type=Path,
-        default=default_csv,
-        help="Path to tetramer frequency CSV (default: paths.tetramer_frequencies_csv in pipeline config).",
-    )
-    inputs.add_argument(
-        "--label-column",
-        default=None,
-        help="Target column name (default: sample_labels if present else sample_label).",
-    )
 
-    task_model = parser.add_argument_group("task and model")
-    task_model.add_argument(
-        "--model",
-        choices=("knn", "random_forest", "logistic_regression"),
-        default=default_model,
-        help="Classifier to train (default: tetramer.model in pipeline config).",
-    )
-    task_model.add_argument(
-        "--task",
-        choices=("cancer_diagnosis", "cancer_type"),
-        default=default_task,
-        help="Binary task (default: tetramer.task in pipeline config).",
-    )
-    task_model.add_argument(
-        "--random-state",
-        type=int,
-        default=default_random_state,
-        help="Random seed for PCA and model initialization (default: tetramer.random_state).",
-    )
-    task_model.add_argument(
-        "--scoring",
-        choices=("accuracy", "f1_weighted", "f1_macro"),
-        default=default_scoring,
-        help="Metric to maximize on validation (default: tetramer.val_scoring).",
-    )
+def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
+    defaults_path = root / "defaults.yaml"
+    experiments_path = root / "experiments.yaml"
+    try:
+        defaults_cfg = yaml.safe_load(defaults_path.read_text(encoding="utf-8"))
+        experiments_cfg = (
+            yaml.safe_load(experiments_path.read_text(encoding="utf-8"))
+            if experiments_path.is_file()
+            else {}
+        )
+    except OSError as exc:
+        raise SystemExit(f"Failed to read config file: {exc}") from exc
 
-    preprocessing = parser.add_argument_group("preprocessing and PCA")
-    preprocessing.add_argument(
-        "--no-scaler",
-        action="store_true",
-        help="Disable StandardScaler before PCA.",
-    )
-    preprocessing.add_argument(
-        "--no-clr",
-        action="store_true",
-        help="Disable CLR; use raw frequency features before scaler/PCA (default: CLR on).",
-    )
-    preprocessing.add_argument(
-        "--clr-pseudocount",
-        type=float,
-        default=default_clr_pseudocount,
-        help="Additive constant before log in CLR (default: tetramer.clr_pseudocount; ignored with --no-clr).",
-    )
-    preprocessing.add_argument(
-        "--pca-min-variance",
-        type=float,
-        default=default_pca_min_variance,
-        help="Minimum cumulative explained variance on training fold (default: tetramer.pca_min_variance).",
-    )
+    try:
+        defaults = dict(defaults_cfg["fit_tetramer_classifier"])
+        paths_cfg = defaults_cfg["paths"]
+        experiments_section = experiments_cfg.get("fit_tetramer_classifier", {})
+        experiments = experiments_section.get("experiments", [])
+        results_json_template = experiments_section.get("results_json_template")
+    except (TypeError, KeyError) as exc:
+        raise SystemExit(f"Invalid defaults/experiment configuration: {exc}") from exc
 
-    grids = parser.add_argument_group("model grids")
-    grids.add_argument(
-        "--n-neighbors",
-        type=str,
-        default=default_n_neighbors_grid,
-        help="Comma-separated n_neighbors values for KNN tuning (default: tetramer.n_neighbors_grid).",
-    )
-    grids.add_argument(
-        "--weights",
-        type=str,
-        default=default_weights_grid,
-        help="Comma-separated weights values for KNN tuning (default: tetramer.weights_grid).",
-    )
-    grids.add_argument(
-        "--rf-n-estimators",
-        type=str,
-        default="200,500",
-        help="Comma-separated n_estimators values for random-forest tuning.",
-    )
-    grids.add_argument(
-        "--rf-max-depth",
-        type=str,
-        default="none,10",
-        help="Comma-separated max_depth values for random-forest tuning (use 'none').",
-    )
-    grids.add_argument(
-        "--rf-min-samples-leaf",
-        type=str,
-        default="1,2",
-        help="Comma-separated min_samples_leaf values for random-forest tuning.",
-    )
-    grids.add_argument(
-        "--lr-c",
-        type=str,
-        default="0.1,1.0,10.0",
-        help="Comma-separated C values for logistic-regression tuning.",
-    )
-    grids.add_argument(
-        "--lr-solver",
-        type=str,
-        default="lbfgs,liblinear",
-        help="Comma-separated solver values for logistic-regression tuning.",
-    )
-    grids.add_argument(
-        "--lr-class-weight",
-        type=str,
-        default="none,balanced",
-        help="Comma-separated class_weight values for logistic-regression tuning.",
-    )
+    if not isinstance(experiments, list):
+        raise SystemExit(f"Invalid experiments list in {experiments_path}")
 
-    output = parser.add_argument_group("reporting and output")
-    output.add_argument(
-        "--baselines",
-        action="store_true",
-        help="Also report test ROC AUC for majority-class and stratified-random baselines.",
-    )
-    output.add_argument(
-        "--results-json",
-        type=str,
-        nargs="?",
-        const="",
-        default=None,
-        help=(
-            "Write run metadata and metrics (script, timestamp, task, model, config, "
-            "test ROC AUC, validation score) to a JSON file after normal output. "
-            "With no path, writes under <repo>/results/scratch/ with an auto-generated name. "
-            "Omit the option entirely to skip writing."
-        ),
-    )
-    return parser.parse_args(list(argv) if argv is not None else None)
+    experiment_name = None
+    if expt == 0:
+        selected = {}
+    else:
+        if not experiments:
+            raise SystemExit(f"No experiments found in {experiments_path}")
+        if expt > len(experiments):
+            raise SystemExit(
+                f"--expt {expt} is out of range. experiments.yaml defines {len(experiments)} experiments."
+            )
+        selected = experiments[expt - 1]
+        experiment_name = selected.get("name")
+
+    if not isinstance(selected, dict):
+        raise SystemExit(
+            "Selected experiment entry must be a mapping."
+        )
+    overrides = selected.get("overrides", {})
+    if overrides is None:
+        overrides = {}
+    if not isinstance(overrides, dict):
+        raise SystemExit(f"Experiment {expt} tetramer overrides must be a mapping.")
+
+    config = {**defaults, **overrides}
+    if expt != 0 and config.get("results_json") is None and results_json_template is not None:
+        if not isinstance(results_json_template, str) or not results_json_template.strip():
+            raise SystemExit(
+                "fit_tetramer_classifier_results_json_template must be a non-empty string."
+            )
+        if not isinstance(experiment_name, str) or not experiment_name.strip():
+            raise SystemExit(
+                "Each experiment must define a non-empty 'name' when using "
+                "fit_tetramer_classifier_results_json_template."
+            )
+        config["results_json"] = results_json_template.format(
+            name=experiment_name.strip()
+        )
+    args_dict = {
+        "csv": root / str(paths_cfg["tetramer_frequencies_csv"]).strip(),
+        "label_column": config.get("label_column"),
+        "model": str(config["model"]).strip(),
+        "task": str(config["task"]).strip(),
+        "random_state": int(config["random_state"]),
+        "scoring": str(config["val_scoring"]).strip(),
+        "no_scaler": not bool(config["use_scaler"]),
+        "no_clr": not bool(config["use_clr"]),
+        "clr_pseudocount": float(config["clr_pseudocount"]),
+        "pca_min_variance": float(config["pca_min_variance"]),
+        "n_neighbors": str(config["n_neighbors_grid"]).strip(),
+        "weights": str(config["weights_grid"]).strip(),
+        "rf_n_estimators": str(config["rf_n_estimators_grid"]).strip(),
+        "rf_max_depth": str(config["rf_max_depth_grid"]).strip(),
+        "rf_min_samples_leaf": str(config["rf_min_samples_leaf_grid"]).strip(),
+        "lr_c": str(config["lr_c_grid"]).strip(),
+        "lr_solver": str(config["lr_solver_grid"]).strip(),
+        "lr_class_weight": str(config["lr_class_weight_grid"]).strip(),
+        "baselines": bool(config["baselines"]),
+        "results_json": config.get("results_json"),
+        "experiment_index": expt,
+        "experiment_overrides": dict(overrides),
+        "log_prefix": (f"E{expt}" if expt > 0 else ""),
+    }
+    return SimpleNamespace(**args_dict)
+
+
+def _print_experiment_line(args: argparse.Namespace) -> None:
+    expt = int(getattr(args, "experiment_index", 0))
+    overrides = dict(getattr(args, "experiment_overrides", {}))
+    model = str(getattr(args, "model", ""))
+    task = str(getattr(args, "task", ""))
+    prefix = str(getattr(args, "log_prefix", ""))
+    if expt == 0:
+        print("Default config", flush=True)
+        return
+    del overrides
+    print(_prefixed(prefix, f"Config - model: {model}, task: {task}"), flush=True)
 
 
 def _validate_basic_args(args: argparse.Namespace) -> None:
@@ -260,7 +227,11 @@ def _validate_basic_args(args: argparse.Namespace) -> None:
         raise SystemExit("--pca-min-variance must be in (0, 1].")
 
 
-# ----- Comma-separated CLI grid parsing -----
+def _prefixed(prefix: str, text: str) -> str:
+    return f"{prefix} {text}" if prefix else text
+
+
+# ----- Comma-separated model-grid parsing -----
 
 
 def _split_arg_list(raw: str, description: str) -> List[str]:
@@ -699,11 +670,14 @@ def _tune_model_on_validation(
     grids: ModelGrids,
     n_components_grid: Sequence[int],
 ) -> TuningResult:
+    prefix = str(getattr(args, "log_prefix", ""))
     if args.model == "knn":
         print(
-            "Tuning on validation, grid "
-            f"n_components={list(n_components_grid)}, "
-            f"n_neighbors={grids.n_neighbors}, weights={grids.weights}",
+            _prefixed(
+                prefix,
+                f"Grid - n_components: {list(n_components_grid)}, "
+                f"n_neighbors: {grids.n_neighbors}, weights: {grids.weights}",
+            ),
             flush=True,
         )
         result = tune_knn_on_val(
@@ -723,10 +697,12 @@ def _tune_model_on_validation(
 
     if args.model == "random_forest":
         print(
-            "Tuning on validation, grid "
-            f"n_estimators={grids.rf_n_estimators}, "
-            f"max_depth={grids.rf_max_depth}, "
-            f"min_samples_leaf={grids.rf_min_samples_leaf}",
+            _prefixed(
+                prefix,
+                f"Grid - n_estimators: {grids.rf_n_estimators}, "
+                f"max_depth: {grids.rf_max_depth}, "
+                f"min_samples_leaf: {grids.rf_min_samples_leaf}",
+            ),
             flush=True,
         )
         result = tune_random_forest_on_val(
@@ -745,9 +721,11 @@ def _tune_model_on_validation(
         return result
 
     print(
-        "Tuning on validation, grid "
-        f"n_components={list(n_components_grid)}, "
-        f"C={grids.lr_c}, solver={grids.lr_solver}, class_weight={grids.lr_class_weight}",
+        _prefixed(
+            prefix,
+            f"Grid - n_components: {list(n_components_grid)}, "
+            f"C: {grids.lr_c}, solver: {grids.lr_solver}, class_weight: {grids.lr_class_weight}",
+        ),
         flush=True,
     )
     result = tune_logistic_regression_on_val(
@@ -802,17 +780,33 @@ def _label_counts(y: np.ndarray) -> Dict[str, int]:
     return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
 
-def _print_dataset_summary(splits: TaskSplits) -> None:
+def _print_dataset_summary(splits: TaskSplits, *, prefix: str = "") -> None:
+    dev_counts = _label_counts(splits.y_development)
+    holdout_counts = _label_counts(splits.y_holdout)
+    dev_counts_line = ", ".join(f"{k}: {v}" for k, v in dev_counts.items())
+    holdout_counts_line = ", ".join(f"{k}: {v}" for k, v in holdout_counts.items())
     print(
-        f"Samples: development={len(splits.y_development)}, "
-        f"holdout={len(splits.y_holdout)}, features={splits.X_train.shape[1]}",
+        _prefixed(
+            prefix,
+            f"Sizes - development: {len(splits.y_development)}, "
+            f"holdout: {len(splits.y_holdout)}, features: {splits.X_train.shape[1]}",
+        ),
         flush=True,
     )
-    print(f"Class counts (development): {_label_counts(splits.y_development)}", flush=True)
-    print(f"Class counts (holdout): {_label_counts(splits.y_holdout)}", flush=True)
     print(
-        f"Split sizes - train: {len(splits.y_train)}, "
-        f"val: {len(splits.y_val)}, test: {len(splits.y_test)}",
+        _prefixed(prefix, f"Development - {dev_counts_line}"),
+        flush=True,
+    )
+    print(
+        _prefixed(
+            prefix,
+            f"  Splits - train: {len(splits.y_train)}, "
+            f"val: {len(splits.y_val)}, test: {len(splits.y_test)}",
+        ),
+        flush=True,
+    )
+    print(
+        _prefixed(prefix, f"Holdout - {holdout_counts_line}"),
         flush=True,
     )
 
@@ -835,10 +829,13 @@ def _evaluate_model(pipe: Pipeline, splits: TaskSplits) -> EvaluationResult:
     return EvaluationResult(test_auc=test_auc, holdout_auc=holdout_auc)
 
 
-def _print_evaluation(model: str, result: EvaluationResult) -> None:
-    print("\nEvaluation (binary ROC AUC):", flush=True)
-    print(f"  {model} test: {_format_auc(result.test_auc)}", flush=True)
-    print(f"  {model} holdout: {_format_auc(result.holdout_auc)}", flush=True)
+def _print_evaluation(model: str, result: EvaluationResult, *, prefix: str = "") -> None:
+    del model
+    test_value = f"{result.test_auc:.6f}" if np.isfinite(result.test_auc) else "nan"
+    holdout_value = f"{result.holdout_auc:.6f}" if np.isfinite(result.holdout_auc) else "nan"
+    print(_prefixed(prefix, "Evaluation (binary ROC AUC):"), flush=True)
+    print(_prefixed(prefix, f"  test: {test_value}"), flush=True)
+    print(_prefixed(prefix, f"  holdout: {holdout_value}"), flush=True)
 
 
 def _print_baselines(splits: TaskSplits, random_state: int) -> None:
@@ -867,6 +864,10 @@ def _float_for_json(x: float) -> Optional[float]:
     if not math.isfinite(x):
         return None
     return float(x)
+
+
+def _format_hyperparameters(params: Dict[str, object]) -> str:
+    return ", ".join(f"{k}: {v}" for k, v in params.items())
 
 
 def _results_json_out_path(
@@ -939,9 +940,10 @@ def _write_results_json(
 
 
 def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
+    prefix = str(getattr(args, "log_prefix", ""))
     if args.model == "random_forest":
         # The existing analysis treats tree models separately and skips PCA for RF.
-        print("PCA: off for random_forest", flush=True)
+        print(_prefixed(prefix, "PCA - min_explained_variance: n/a, CLR: n/a"), flush=True)
         return []
 
     use_scaler = not args.no_scaler
@@ -955,8 +957,11 @@ def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
         pca_random_state=args.random_state,
     )
     print(
-        f"PCA n_components candidates (min cumulative EV >= {args.pca_min_variance}): "
-        f"{n_components_grid} (CLR: {'on' if use_clr else 'off'})",
+        _prefixed(
+            prefix,
+            f"PCA - min_explained_variance: {args.pca_min_variance}, "
+            f"CLR: {'on' if use_clr else 'off'}",
+        ),
         flush=True,
     )
     return n_components_grid
@@ -964,6 +969,8 @@ def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
 
 def run_classifier(args: argparse.Namespace, root: Path) -> int:
     _validate_basic_args(args)
+    _print_experiment_line(args)
+    prefix = str(getattr(args, "log_prefix", ""))
     results_json_path = _results_json_out_path(
         root,
         args.results_json,
@@ -977,7 +984,7 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
     _require_binary_classes(splits.y_train, split_name="train split", task=args.task)
     _require_binary_classes(splits.y_val, split_name="validation split", task=args.task)
     _require_binary_classes(splits.y_test, split_name="test split", task=args.task)
-    _print_dataset_summary(splits)
+    _print_dataset_summary(splits, prefix=prefix)
 
     grids = _build_model_grids(args)
     n_components_grid = _build_pca_grid(args, splits)
@@ -996,11 +1003,15 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
         grids=grids,
         n_components_grid=n_components_grid,
     )
-    print(f"Best validation {args.scoring}: {tuning.validation_score:.6f}", flush=True)
-    print(f"Best hyperparameters: {tuning.best_params}", flush=True)
+    print(_prefixed(prefix, "Best validation:"), flush=True)
+    print(_prefixed(prefix, f"  {args.scoring}: {tuning.validation_score:.6f}"), flush=True)
+    print(
+        _prefixed(prefix, f"  Hyperparameters - {_format_hyperparameters(tuning.best_params)}"),
+        flush=True,
+    )
 
     evaluation = _evaluate_model(pipe, splits)
-    _print_evaluation(args.model, evaluation)
+    _print_evaluation(args.model, evaluation, prefix=prefix)
     if args.baselines:
         _print_baselines(splits, args.random_state)
 
@@ -1018,7 +1029,8 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     root = Path(__file__).resolve().parent.parent
-    args = parse_args(argv, root)
+    expt = parse_experiment_arg(argv, root)
+    args = _load_experiment_args(root, expt=expt)
     return run_classifier(args, root)
 
 

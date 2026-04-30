@@ -166,10 +166,10 @@ def _binary_roc_auc(clf, X_test: np.ndarray, y_test: np.ndarray) -> float:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     root = Path(__file__).resolve().parent.parent
-    config_path = root / "configs" / "pipeline.yaml"
+    config_path = root / "defaults.yaml"
     try:
         cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        default_task = str(cfg["tetramer"]["task"]).strip()
+        default_task = str(cfg["fit_tetramer_classifier"]["task"]).strip()
         default_classifier = str(cfg["uc_cap_classifiers"][0]).strip()
         first_grid = cfg["uc_cap_pipeline_grid"][0]
         n_uc = int(first_grid["n_uc"])
@@ -188,19 +188,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--csv",
         type=Path,
         default=default_cap_csv,
-        help="Input CAP feature CSV (default: first uc_cap_pipeline_grid entry in pipeline config).",
+        help="Input CAP feature CSV (default: first uc_cap_pipeline_grid entry in defaults config).",
     )
     parser.add_argument(
         "--task",
         choices=("cancer_diagnosis", "cancer_type"),
         default=default_task,
-        help="Classification task (default: tetramer.task in pipeline config).",
+        help="Classification task (default: fit_tetramer_classifier.task in defaults config).",
     )
     parser.add_argument(
         "--classifier",
         choices=("random_forest", "logistic_regression", "svm"),
         default=default_classifier,
-        help="Classifier family (default: first uc_cap_classifiers entry in pipeline config).",
+        help="Classifier family (default: first uc_cap_classifiers entry in defaults config).",
     )
     parser.add_argument(
         "--random-state",
