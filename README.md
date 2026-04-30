@@ -41,8 +41,8 @@ Samples labeled as `benign` and non-fecal samples in some studies are excluded f
 Install script dependencies from the repository root: `pip install -r requirements.txt`.
 
 This project is organized as a Makefile-driven analysis pipeline. Paths and default
-parameters are stored in `configs/pipeline.yaml`, and `Makefile` defines targets
-that run the pipeline scripts with those configured settings.
+parameters are stored in `configs/pipeline.yaml`, and scripts load those defaults
+directly. `Makefile` provides convenience targets for the common pipeline steps.
 The `configs/datasets.csv` file identifies development and holdout studies in the
 `partition` column. Train/val/test splits are taken only from development studies,
 and metrics are calculated separately for test (development) and holdout studies.
@@ -54,10 +54,15 @@ See the table for an overview of all the steps and read below for details.
 |-----|--------|--------|
 | 1. Download | download_sra_data.py | `make download_data` |
 | 2. Tetramer counts | calculate_tetramer_frequencies.py | `make tetramer_frequencies` |
-| 3. Tetramer classifier | fit_tetramer_classifier.py | `make fit_tetramer TASK=cancer_diagnosis MODEL=knn` |
+| 3. Tetramer classifier | fit_tetramer_classifier.py | `make fit_tetramer` |
 | 4. Sequence cache | build_uc_cap_sequence_cache.py | `make sequence_cache` |
 | 5. UC/CAP pipeline grid | grid_uc_cap_pipeline.py | `make grid_uc_cap` |
-| 6. UC/CAP pipeline + classifier | run_uc_cap_pipeline.py + fit_uc_cap_classifier.py | `make fit_uc_cap TASK=cancer_diagnosis MODEL=random_forest N_UC=1000 N_CLUSTERS=2000 N_CAP=5000` |
+| 6. UC/CAP pipeline + classifier | run_uc_cap_pipeline.py + fit_uc_cap_classifier.py | `make fit_uc_cap` |
+
+For non-default settings, run the Python scripts directly and pass CLI flags.
+
+If you want to see why Make would rebuild a target (including recursive prerequisite chains), use `make explain-<target>`.
+For example, run `make explain-grid_uc_cap`; replace the part after `explain-` with any Make target name.
 
 <details>
 <summary>Inputs/Outputs by step</summary>
@@ -66,8 +71,8 @@ See the table for an overview of all the steps and read below for details.
 2. Tetramer counts. Inputs: `fasta/<study>/<Run>.fasta.gz`. Outputs: `outputs/tetramer_frequencies.csv`, `outputs/<cancer>/<study>/<Run>.csv.xz`.
 3. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: `results/scratch/fit_tetramer_classifier_*.json`.
 4. Sequence cache. Inputs: `outputs/<cancer>/<study>/<Run>.csv.xz`. Outputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`.
-6. UC/CAP pipeline grid. Inputs: `configs/pipeline.yaml`, `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` across the YAML grid.
-5. UC/CAP pipeline + classifier. Inputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`, `outputs/tetramer_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
+5. UC/CAP pipeline grid. Inputs: `configs/pipeline.yaml`, `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` across the YAML grid.
+6. UC/CAP pipeline + classifier. Inputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`, `outputs/tetramer_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
 
 </details>
 
@@ -84,7 +89,7 @@ The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` hold **raw i
 
 `fit_tetramer_classifier.py` fits run-level classifiers on `outputs/tetramer_frequencies.csv`, with optional CLR, scaling, and PCA.
 Shared split logic assigns each run to train, validation, test, or holdout; hyperparameters are chosen on validation, then ROC AUC is reported for test and holdout.
-Supported models are `knn`, `random_forest`, and `logistic_regression` (selected via `--model` or `MODEL` in `make fit_tetramer`).
+Supported models are `knn`, `random_forest`, and `logistic_regression` (selected via `--model` when running the script directly).
 The script supports two binary tasks via `--task`: cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal).
 We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` or `--task=cancer_type` to generate the `*_results.txt` files in `results/`.
 
@@ -93,8 +98,8 @@ We ran the script with the `--baselines` argument and `--task=cancer_diagnosis` 
 This stage takes the sequence-level tetramer count files described above.
 
 - `build_uc_cap_sequence_cache.py` builds a cached sequence-level tetramer table for UC/CAP exploration.
-  Running it with default arguments keeps only the first 5000 rows from each run file and saves the result in a Parquet table under `outputs/uc_cap`.
+  Running it with default arguments keeps the first 10000 rows from each run file and saves the result in a Parquet table under `outputs/uc_cap`.
 - `run_uc_cap_pipeline.py` performs unsupervised clustering on a subset of cached rows (`n_uc`) and then assigns a larger subset of sequences (`n_cap`) to the learned cluster centroids, producing run-level cluster abundance profiles.
-  Its main output is `outputs/uc_cap/cap_features_*.csv`, where each row is a sequencing run and the `cluster_*` columns are normalized per-run abundances used as features for downstream classification.
+  Its main output is `outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv`, where each row is a sequencing run and the `cluster_*` columns are normalized per-run abundances used as features for downstream classification.
 - `fit_uc_cap_classifier.py` uses the features generated by the pipeline and the same shared run splits to fit classification models.
 - `grid_uc_cap_pipeline.py` runs the pipeline for different combinations of parameters from `configs/pipeline.yaml`. Then `grid_uc_cap_classifier.py` uses the features generated by the pipeline to run the classifier with different models for the two tasks.

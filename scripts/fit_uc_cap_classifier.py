@@ -33,6 +33,7 @@ from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import yaml
 from shared_splits import add_split_column, load_run_split_map
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -165,24 +166,41 @@ def _binary_roc_auc(clf, X_test: np.ndarray, y_test: np.ndarray) -> float:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     root = Path(__file__).resolve().parent.parent
+    config_path = root / "configs" / "pipeline.yaml"
+    try:
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        default_task = str(cfg["tetramer"]["task"]).strip()
+        default_classifier = str(cfg["uc_cap_classifiers"][0]).strip()
+        first_grid = cfg["uc_cap_pipeline_grid"][0]
+        n_uc = int(first_grid["n_uc"])
+        n_clusters = int(first_grid["n_clusters"])
+        n_cap = int(first_grid["n_cap"])
+        cap_pattern = str(cfg["paths"]["cap_csv_pattern"]).strip()
+        default_cap_csv = root / cap_pattern.format(
+            n_uc=n_uc, n_clusters=n_clusters, n_cap=n_cap
+        )
+        default_run_metadata = root / str(cfg["paths"]["tetramer_frequencies_csv"]).strip()
+    except (OSError, KeyError, TypeError, ValueError, IndexError) as exc:
+        raise SystemExit(f"Invalid pipeline config defaults in {config_path}: {exc}") from exc
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--csv",
         type=Path,
-        default=root / "outputs" / "uc_cap" / "uc1000_k5000" / "cap10000.csv",
-        help="Input CAP feature CSV.",
+        default=default_cap_csv,
+        help="Input CAP feature CSV (default: first uc_cap_pipeline_grid entry in pipeline config).",
     )
     parser.add_argument(
         "--task",
         choices=("cancer_diagnosis", "cancer_type"),
-        required=True,
-        help="Classification task.",
+        default=default_task,
+        help="Classification task (default: tetramer.task in pipeline config).",
     )
     parser.add_argument(
         "--classifier",
         choices=("random_forest", "logistic_regression", "svm"),
-        required=True,
-        help="Classifier family with default hyperparameters.",
+        default=default_classifier,
+        help="Classifier family (default: first uc_cap_classifiers entry in pipeline config).",
     )
     parser.add_argument(
         "--random-state",
@@ -193,7 +211,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--run-metadata-csv",
         type=Path,
-        default=root / "outputs" / "tetramer_frequencies.csv",
+        default=default_run_metadata,
         help="Metadata CSV used to derive shared splits (must include Run,sample_label,study_name).",
     )
     parser.add_argument(

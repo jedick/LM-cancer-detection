@@ -26,6 +26,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
 import pandas as pd
+import yaml
 from shared_splits import HOLDOUT, TEST, TRAIN, VAL, add_split_column
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
@@ -95,6 +96,23 @@ class EvaluationResult:
 
 
 def parse_args(argv: Optional[Sequence[str]], root: Path) -> argparse.Namespace:
+    config_path = root / "configs" / "pipeline.yaml"
+    try:
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        tet_cfg = cfg["tetramer"]
+        paths_cfg = cfg["paths"]
+        default_csv = root / str(paths_cfg["tetramer_frequencies_csv"]).strip()
+        default_model = str(tet_cfg["model"]).strip()
+        default_task = str(tet_cfg["task"]).strip()
+        default_random_state = int(tet_cfg["random_state"])
+        default_scoring = str(tet_cfg["val_scoring"]).strip()
+        default_clr_pseudocount = float(tet_cfg["clr_pseudocount"])
+        default_pca_min_variance = float(tet_cfg["pca_min_variance"])
+        default_n_neighbors_grid = str(tet_cfg["n_neighbors_grid"]).strip()
+        default_weights_grid = str(tet_cfg["weights_grid"]).strip()
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Invalid pipeline config defaults in {config_path}: {exc}") from exc
+
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -104,8 +122,8 @@ def parse_args(argv: Optional[Sequence[str]], root: Path) -> argparse.Namespace:
     inputs.add_argument(
         "--csv",
         type=Path,
-        default=root / "outputs" / "tetramer_frequencies.csv",
-        help="Path to tetramer frequency CSV (default: repo root outputs/ file).",
+        default=default_csv,
+        help="Path to tetramer frequency CSV (default: paths.tetramer_frequencies_csv in pipeline config).",
     )
     inputs.add_argument(
         "--label-column",
@@ -117,26 +135,26 @@ def parse_args(argv: Optional[Sequence[str]], root: Path) -> argparse.Namespace:
     task_model.add_argument(
         "--model",
         choices=("knn", "random_forest", "logistic_regression"),
-        default="knn",
-        help="Classifier to train (default: knn).",
+        default=default_model,
+        help="Classifier to train (default: tetramer.model in pipeline config).",
     )
     task_model.add_argument(
         "--task",
         choices=("cancer_diagnosis", "cancer_type"),
-        default="cancer_diagnosis",
-        help="Binary task: cancer_diagnosis (all samples) or cancer_type (cancer-only).",
+        default=default_task,
+        help="Binary task (default: tetramer.task in pipeline config).",
     )
     task_model.add_argument(
         "--random-state",
         type=int,
-        default=0,
-        help="Random seed for PCA and model initialization.",
+        default=default_random_state,
+        help="Random seed for PCA and model initialization (default: tetramer.random_state).",
     )
     task_model.add_argument(
         "--scoring",
         choices=("accuracy", "f1_weighted", "f1_macro"),
-        default="f1_weighted",
-        help="Metric to maximize on the validation set when picking hyperparameters.",
+        default=default_scoring,
+        help="Metric to maximize on validation (default: tetramer.val_scoring).",
     )
 
     preprocessing = parser.add_argument_group("preprocessing and PCA")
@@ -153,28 +171,28 @@ def parse_args(argv: Optional[Sequence[str]], root: Path) -> argparse.Namespace:
     preprocessing.add_argument(
         "--clr-pseudocount",
         type=float,
-        default=1e-6,
-        help="Additive constant before log in CLR (default: 1e-6; ignored with --no-clr).",
+        default=default_clr_pseudocount,
+        help="Additive constant before log in CLR (default: tetramer.clr_pseudocount; ignored with --no-clr).",
     )
     preprocessing.add_argument(
         "--pca-min-variance",
         type=float,
-        default=0.9,
-        help="Minimum cumulative explained variance on the training fold for PCA candidates.",
+        default=default_pca_min_variance,
+        help="Minimum cumulative explained variance on training fold (default: tetramer.pca_min_variance).",
     )
 
     grids = parser.add_argument_group("model grids")
     grids.add_argument(
         "--n-neighbors",
         type=str,
-        default="5,15",
-        help="Comma-separated n_neighbors values for KNN tuning (default: 5,15).",
+        default=default_n_neighbors_grid,
+        help="Comma-separated n_neighbors values for KNN tuning (default: tetramer.n_neighbors_grid).",
     )
     grids.add_argument(
         "--weights",
         type=str,
-        default="uniform,distance",
-        help="Comma-separated weights values for KNN tuning (default: uniform,distance).",
+        default=default_weights_grid,
+        help="Comma-separated weights values for KNN tuning (default: tetramer.weights_grid).",
     )
     grids.add_argument(
         "--rf-n-estimators",

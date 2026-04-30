@@ -1,7 +1,7 @@
 # Central description of pipeline parameters and defaults used across scripts.
 # Paths are relative to the repository root unless noted.
-# Scripts still use their own argparse defaults; this file is the single reference
-# for Makefile / documentation. Some shared Python utilities read selected values.
+# Scripts load defaults from this file unless flags are explicitly passed at the CLI.
+# Keep values here as the single source of truth for pipeline defaults.
 
 paths:
   data_dir: data
@@ -29,13 +29,13 @@ shared_splits:
 # Model name is fixed; hyperparameters are tuned from CLI defaults below.
 tetramer:
   model: knn
-  default_task: cancer_diagnosis
-  default_random_state: 0
-  default_clr_pseudocount: 1.0e-6
-  default_pca_min_variance: 0.9
-  default_n_neighbors_grid: "5,15"
-  default_weights_grid: "uniform,distance"
-  default_val_scoring: f1_weighted
+  task: cancer_diagnosis
+  random_state: 0
+  clr_pseudocount: 1.0e-6
+  pca_min_variance: 0.9
+  n_neighbors_grid: "5,15"
+  weights_grid: "uniform,distance"
+  val_scoring: f1_weighted
 
 # build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
 sequence_cache:
@@ -43,7 +43,7 @@ sequence_cache:
   input_suffix: ".csv.xz"
   parquet_compression: zstd
 
-# Defaults for run_uc_cap_pipeline.py (shared with Makefile / future wrappers).
+# Defaults for run_uc_cap_pipeline.py.
 run_uc_cap_defaults:
   random_state: 0
   pca_variance: 0.95

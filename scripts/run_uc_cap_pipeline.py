@@ -30,15 +30,10 @@ import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 import pyarrow.compute as pc
+import yaml
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import PCA
 from shared_splits import load_run_split_map
-
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover
-    print(f"PyYAML is required ({exc})", file=sys.stderr)
-    raise SystemExit(1) from exc
 
 
 RUN_FILE_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
@@ -278,11 +273,42 @@ def load_run_metadata(path: Path) -> Optional[pd.DataFrame]:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
+    default_config_path = root / "configs" / "pipeline.yaml"
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument("--config", type=Path, default=default_config_path)
+    bootstrap_args, _ = bootstrap.parse_known_args(list(argv) if argv is not None else None)
+    config_path = bootstrap_args.config
+    try:
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        paths_cfg = cfg["paths"]
+        uc_cfg = cfg["run_uc_cap_defaults"]
+        first_grid = cfg["uc_cap_pipeline_grid"][0]
+        default_outputs_dir = root / str(paths_cfg["outputs_dir"]).strip()
+        default_out_dir = root / str(paths_cfg["uc_cap_root"]).strip()
+        default_run_metadata_csv = root / str(paths_cfg["tetramer_frequencies_csv"]).strip()
+        default_n_uc = int(first_grid["n_uc"])
+        default_n_cap = str(first_grid["n_cap"])
+        default_n_clusters = int(first_grid["n_clusters"])
+        default_random_state = int(uc_cfg["random_state"])
+        default_pca_variance = float(uc_cfg["pca_variance"])
+        default_pca_components = uc_cfg.get("pca_components")
+        if default_pca_components is not None:
+            default_pca_components = int(default_pca_components)
+        default_no_seq_normalize = not bool(uc_cfg["seq_normalize"])
+        default_seq_log1p = bool(uc_cfg["seq_log1p"])
+        default_cap_transform = str(uc_cfg["cap_transform"]).strip()
+        default_clr_pseudocount = float(uc_cfg["clr_pseudocount"])
+        default_batch_size = int(uc_cfg["batch_size"])
+        default_max_iter = int(uc_cfg["max_iter"])
+        default_chunk_size = int(uc_cfg["chunk_size"])
+    except (OSError, KeyError, TypeError, ValueError, IndexError) as exc:
+        raise SystemExit(f"Invalid pipeline defaults in {config_path}: {exc}") from exc
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
         type=Path,
-        default=root / "configs" / "pipeline.yaml",
+        default=config_path,
         help="Path to pipeline.yaml (used to derive default cache parquet path).",
     )
     parser.add_argument(
@@ -294,80 +320,97 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--outputs-dir",
         type=Path,
-        default=root / "outputs",
+        default=default_outputs_dir,
         help="Root directory containing per-run sequence count files.",
     )
     parser.add_argument(
         "--run-metadata-csv",
         type=Path,
-        default=root / "outputs" / "tetramer_frequencies.csv",
+        default=default_run_metadata_csv,
         help="Run metadata CSV used to append labels to CAP output.",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=root / "outputs" / "uc_cap",
+        default=default_out_dir,
         help="Directory to write UC/CAP artifacts.",
     )
-    parser.add_argument("--n-uc", type=int, default=10, help="Sequences per run for UC fit.")
+    parser.add_argument(
+        "--n-uc",
+        type=int,
+        default=default_n_uc,
+        help="Sequences per run for UC fit (default: first uc_cap_pipeline_grid entry).",
+    )
     parser.add_argument(
         "--n-cap",
         type=str,
-        default="10",
-        help="Sequences per run for CAP assignment, or 'all'.",
+        default=default_n_cap,
+        help="Sequences per run for CAP assignment, or 'all' (default: first uc_cap_pipeline_grid entry).",
     )
-    parser.add_argument("--n-clusters", type=int, default=100, help="K for k-means.")
-    parser.add_argument("--random-state", type=int, default=0, help="Random seed.")
+    parser.add_argument(
+        "--n-clusters",
+        type=int,
+        default=default_n_clusters,
+        help="K for k-means (default: first uc_cap_pipeline_grid entry).",
+    )
+    parser.add_argument(
+        "--random-state",
+        type=int,
+        default=default_random_state,
+        help="Random seed (default: run_uc_cap_defaults.random_state).",
+    )
     parser.add_argument(
         "--pca-components",
         type=int,
-        default=None,
+        default=default_pca_components,
         help="Optional fixed PCA component count before k-means (default: use --pca-variance).",
     )
     parser.add_argument(
         "--pca-variance",
         type=float,
-        default=0.95,
+        default=default_pca_variance,
         help="Cumulative explained-variance target for PCA when --pca-components is omitted.",
     )
     parser.add_argument(
         "--no-seq-normalize",
         action="store_true",
+        default=default_no_seq_normalize,
         help="Disable per-sequence normalization to relative 4-mer frequencies.",
     )
     parser.add_argument(
         "--seq-log1p",
         action="store_true",
+        default=default_seq_log1p,
         help="Apply log1p after optional per-sequence normalization.",
     )
     parser.add_argument(
         "--cap-transform",
         choices=("none", "clr"),
-        default="none",
+        default=default_cap_transform,
         help="Optional transform applied to run-level CAP vectors.",
     )
     parser.add_argument(
         "--clr-pseudocount",
         type=float,
-        default=1e-6,
+        default=default_clr_pseudocount,
         help="Pseudocount used when --cap-transform=clr.",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=8192,
+        default=default_batch_size,
         help="MiniBatchKMeans batch size.",
     )
     parser.add_argument(
         "--max-iter",
         type=int,
-        default=200,
+        default=default_max_iter,
         help="MiniBatchKMeans max iterations.",
     )
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=20000,
+        default=default_chunk_size,
         help="CSV chunk size when streaming n_cap=all.",
     )
     parser.add_argument(
