@@ -22,6 +22,13 @@ alwaysApply: true
 - Per-run sequence count files for UC/CAP use **`.csv.xz`** under `outputs/<cancer_type>/<study_name>/<Run>.csv.xz`.
 - Scratch experiment JSON outputs are written under **`results/scratch/`** (gitignored); finalized artifacts are manually selected/copied into version-controlled `results/...`.
 
+## Shared split assignment
+
+- Treat **`scripts/shared_splits.py`** as the source of truth for assigning each **`Run`** to exactly one of **`train`**, **`val`**, **`test`**, or **`holdout`**.
+- Split configuration belongs in **`configs/pipeline.yaml`** (`paths.datasets_csv`, `shared_splits.random_state`). Callers should not pass datasets paths or split random states around unless there is a deliberate reason to override the shared contract.
+- Downstream scripts should consume a single split value per run instead of maintaining separate development/holdout partition arrays and train/val/test split arrays.
+- For small run-level metadata tables, prefer **pandas** table operations when they make data loading, joins, and split assignment easier to read.
+
 ## `fasta/` directory and runtime
 
 - In this project, **`fasta` may be a symlink** to a large external directory (e.g. a shared sequence store). A **full pass over every run** can take a **long time** because processing must **read every base** in each **gzip FASTA** (I/O and decompression bound). Do not assume “small repo” timings for batch scripts over all runs.

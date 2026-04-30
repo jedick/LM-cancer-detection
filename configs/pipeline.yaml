@@ -1,7 +1,7 @@
 # Central description of pipeline parameters and defaults used across scripts.
 # Paths are relative to the repository root unless noted.
 # Scripts still use their own argparse defaults; this file is the single reference
-# for Makefile / documentation (Step 1: not yet wired into Python).
+# for Makefile / documentation. Some shared Python utilities read selected values.
 
 paths:
   data_dir: data
@@ -10,6 +10,7 @@ paths:
   results_dir: results
   # Ephemeral / local experiment outputs (gitignored); finalized copies go under results/
   results_scratch_dir: results/scratch
+  datasets_csv: configs/datasets.csv
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
   # CAP CSV layout from run_uc_cap_pipeline.py
@@ -19,6 +20,10 @@ paths:
 tasks:
   - cancer_diagnosis
   - cancer_type
+
+# Canonical Run -> train/val/test/holdout assignment (scripts/shared_splits.py).
+shared_splits:
+  random_state: 0
 
 # Run-level tetramer pipeline: CLR → optional scaler → PCA → KNN (fit_tetramer_classifier.py).
 # Model name is fixed; hyperparameters are tuned from CLI defaults below.
@@ -34,7 +39,7 @@ tetramer:
 
 # build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
 sequence_cache:
-  n_max_per_run: 1000
+  n_max_per_run: 10000
   input_suffix: ".csv.xz"
   parquet_compression: zstd
 
@@ -58,14 +63,14 @@ uc_cap_classifiers:
   - svm
 
 # Exact (n_uc, n_clusters, n_cap) triples used by scripts/grid_uc_cap_pipeline.py.
-# n_cap is only 5000 and 10000 here; n_uc is 1000 or 2000; n_clusters is 2000 or 5000.
+# n_uc is 1000 or 2000; n_clusters is 2000 or 5000; n_cap is 5000 or 10000.
 uc_cap_pipeline_grid:
-  - { n_uc: 10, n_clusters: 20, n_cap: 50 }
-  - { n_uc: 20, n_clusters: 20, n_cap: 50 }
-  - { n_uc: 10, n_clusters: 50, n_cap: 50 }
-  - { n_uc: 20, n_clusters: 50, n_cap: 50 }
-  - { n_uc: 10, n_clusters: 20, n_cap: 100 }
-  - { n_uc: 20, n_clusters: 20, n_cap: 100 }
-  - { n_uc: 10, n_clusters: 50, n_cap: 100 }
-  - { n_uc: 20, n_clusters: 50, n_cap: 100 }
+  - { n_uc: 1000, n_clusters: 2000, n_cap: 5000 }
+  - { n_uc: 2000, n_clusters: 2000, n_cap: 5000 }
+  - { n_uc: 1000, n_clusters: 5000, n_cap: 5000 }
+  - { n_uc: 2000, n_clusters: 5000, n_cap: 5000 }
+  - { n_uc: 1000, n_clusters: 2000, n_cap: 10000 }
+  - { n_uc: 2000, n_clusters: 2000, n_cap: 10000 }
+  - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
+  - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
 

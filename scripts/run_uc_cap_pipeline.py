@@ -32,7 +32,7 @@ import pyarrow.dataset as ds
 import pyarrow.compute as pc
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import PCA
-from shared_splits import stratified_split_70_10_20
+from shared_splits import load_run_split_map
 
 try:
     import yaml
@@ -276,27 +276,6 @@ def load_run_metadata(path: Path) -> Optional[pd.DataFrame]:
     return meta.drop_duplicates(subset=["study_name", "Run"])
 
 
-def build_run_split_map(
-    metadata: pd.DataFrame,
-    random_state: int,
-) -> Dict[str, str]:
-    run_ids = metadata["Run"].to_numpy(dtype=object)
-    labels = metadata["sample_label"].to_numpy(dtype=object)
-    runs_train, runs_val, runs_test, _, _, _ = stratified_split_70_10_20(
-        run_ids,
-        labels,
-        random_state=random_state,
-    )
-    split_map: Dict[str, str] = {}
-    for run in runs_train:
-        split_map[str(run)] = "train"
-    for run in runs_val:
-        split_map[str(run)] = "val"
-    for run in runs_test:
-        split_map[str(run)] = "test"
-    return split_map
-
-
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -449,7 +428,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit(
             f"Run metadata CSV required for shared splits not found: {args.run_metadata_csv}"
         )
-    run_split_map = build_run_split_map(metadata, args.random_state)
+    run_split_map = load_run_split_map(
+        args.run_metadata_csv,
+    )
     train_runs = {run for run, split in run_split_map.items() if split == "train"}
 
     uc_dir = args.out_dir / f"uc{args.n_uc}_k{args.n_clusters}"

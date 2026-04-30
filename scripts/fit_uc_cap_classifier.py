@@ -8,7 +8,7 @@ This script expects a CAP CSV produced by run_uc_cap_pipeline.py with:
   - Optional recorded split in column "split"
   - Feature columns named "cluster_*"
 
-Train/val/test partitions are always derived from scripts/shared_splits.py.
+Train/val/test/holdout assignments are always derived from scripts/shared_splits.py.
 If the CSV contains a "split" column, it must exactly match the derived split
 for every run or the script exits with an error.
 
@@ -33,7 +33,7 @@ from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from shared_splits import stratified_split_70_10_20
+from shared_splits import add_split_column, load_run_split_map
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, roc_auc_score
@@ -82,43 +82,6 @@ def _load_cap_csv(csv_path: Path) -> pd.DataFrame:
     if df["sample_label"].isna().any():
         raise SystemExit("Found empty sample_label values in CSV.")
     return df
-
-
-def _build_expected_split_map(
-    metadata_df: pd.DataFrame, random_state: int
-) -> Dict[str, str]:
-    run_meta = metadata_df.loc[:, ["Run", "sample_label"]].drop_duplicates(subset=["Run"])
-    duplicated = metadata_df.groupby("Run")["sample_label"].nunique()
-    bad_runs = duplicated[duplicated > 1].index.tolist()
-    if bad_runs:
-        raise SystemExit(
-            "A run has conflicting sample_label values in CSV. "
-            f"Example runs: {bad_runs[:5]}"
-        )
-    runs = run_meta["Run"].astype(str).to_numpy(dtype=object)
-    labels = run_meta["sample_label"].astype(str).to_numpy(dtype=object)
-    runs_train, runs_val, runs_test, _, _, _ = stratified_split_70_10_20(
-        runs, labels, random_state=random_state
-    )
-    out: Dict[str, str] = {}
-    for run in runs_train:
-        out[str(run)] = "train"
-    for run in runs_val:
-        out[str(run)] = "val"
-    for run in runs_test:
-        out[str(run)] = "test"
-    return out
-
-
-def _load_split_metadata(path: Path) -> pd.DataFrame:
-    if not path.is_file():
-        raise SystemExit(f"Run metadata CSV not found: {path}")
-    meta = pd.read_csv(path, usecols=["Run", "sample_label"])
-    if meta.empty:
-        raise SystemExit(f"Run metadata CSV has no rows: {path}")
-    if meta["Run"].isna().any() or meta["sample_label"].isna().any():
-        raise SystemExit("Run metadata CSV has empty Run/sample_label values.")
-    return meta
 
 
 def _validate_csv_splits(df: pd.DataFrame, expected: Dict[str, str]) -> None:
@@ -225,13 +188,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--random-state",
         type=int,
         default=0,
-        help="Random state used for shared split generation.",
+        help="Random state used by classifiers that need one.",
     )
     parser.add_argument(
         "--run-metadata-csv",
         type=Path,
         default=root / "outputs" / "tetramer_frequencies.csv",
-        help="Metadata CSV used to derive shared splits (must include Run,sample_label).",
+        help="Metadata CSV used to derive shared splits (must include Run,sample_label,study_name).",
     )
     parser.add_argument(
         "--results-json",
@@ -252,17 +215,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     df = _load_cap_csv(args.csv)
-    split_meta_df = _load_split_metadata(args.run_metadata_csv)
-    expected_split_map = _build_expected_split_map(
-        split_meta_df, random_state=args.random_state
+    expected_split_map = load_run_split_map(
+        args.run_metadata_csv,
     )
     _validate_csv_splits(df, expected_split_map)
 
-    df = df.copy()
-    df["Run"] = df["Run"].astype(str)
-    df["split_from_shared"] = df["Run"].map(expected_split_map)
-    if df["split_from_shared"].isna().any():
-        raise SystemExit("Some runs in CSV were not assigned by shared split logic.")
+    df = add_split_column(
+        df,
+        run_metadata_csv=args.run_metadata_csv,
+        split_column="split_from_shared",
+    )
 
     task_df = _prepare_task(df, args.task)
     feature_cols = [c for c in task_df.columns if c.startswith("cluster_")]
