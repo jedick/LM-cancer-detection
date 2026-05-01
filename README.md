@@ -8,7 +8,7 @@
 
 **Stage 1** uses 16S rRNA sequences from eight studies (four breast cancer, four colorectal cancer). All eight studies contribute to model fitting and testing via in-study train/test splits. In-study test sets will yield optimistic AUC estimates, as the model has seen sequences from the same study during training.
 
-**Stage 2** addresses this by validating on four held-out studies (two breast, two colorectal) not seen during training. AUC values are expected to drop substantially for all models. *The central research question is whether the language model generalizes better across studies than classical approaches.*
+**Stage 2** addresses this by validating on four holdout studies (two breast, two colorectal) not seen during training. AUC values are expected to drop substantially for all models. *The central research question is whether the language model generalizes better across studies than classical approaches.*
 
 ## Methods
 
@@ -82,17 +82,23 @@ For example, run `make explain-grid_uc_cap`; replace the part after `explain-` w
 
 `calculate_tetramer_frequencies.py` builds tetramer (4-mer) profiles from the downloaded FASTA files.
 The script only processes rows with `sample_used=TRUE` in the CSV files under `data/`.
-It writes two outputs from the same pass: `outputs/tetramer_frequencies.csv` has one row per run with labels plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
-The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` hold **raw integer** 4-mer counts per sequence for Unsupervised Clustering with Cluster Abundance Profiling (see below); each file has one row per FASTA sequence in encounter order, 256 columns with no header row, in the same lexicographic ACGT 4-mer order as the 256 feature columns in `outputs/tetramer_frequencies.csv`.
+It writes two outputs with 256 feature columns in the same lexicographic ACGT 4-mer order:
+
+1. `outputs/tetramer_frequencies.csv` is used by the run-level tetramer classifer.
+It has one row per run with labels plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
+2. The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` are used by the UC/CAP classifier.
+They hold 256 columns of **raw integer** 4-mer counts with no header row, one row per FASTA sequence in encounter order.
 
 ### Run-level tetramer classifier
 
-`fit_tetramer_classifier.py` fits run-level classifiers on `outputs/tetramer_frequencies.csv`, with optional CLR, scaling, and PCA.
-Shared split logic assigns each run to train, validation, test, or holdout; hyperparameters are chosen on validation, then ROC AUC is reported for test and holdout.
-Supported models are `knn`, `random_forest`, and `logistic_regression`; the script takes optional `--expt` and resolves task/model plus other settings from `defaults.yaml` and `experiments.yaml` (or uses defaults only when `--expt` is omitted).
-The binary tasks are cancer diagnosis (cancer vs healthy) and cancer type (breast vs colorectal), selected by the active experiment entry.
-The default run (`make fit_tetramer`) writes timestamped JSON to `results/scratch/fit_tetramer_classifier_*.json`; experiment runs write per-experiment JSON to `results/tetramer/{name}.json`.
-Use `make fit_tetramer EXPT=1` to run a single configured experiment and `make fit_tetramer EXPT=0` to run all configured experiments. The `EXPT=0` path uses Make targets for each experiment output, so rebuilds are incremental (only missing or stale outputs are rerun), and you can add `-j` for parallel execution (for example, `make -j4 fit_tetramer EXPT=0`).
+`make fit_tetramer` fits run-level classifiers on `outputs/tetramer_frequencies.csv`, with CLR, scaling, and PCA.
+Default task/model and other settings are resolved from `defaults.yaml` with results written to `results/scratch/`.
+Add `EXPT=N` to use experiment name and overrides from `experiments.yaml` and write results to `results/tetramer/{name}.json`.
+Hyperparameters are chosen on validation, then ROC AUC is reported for test and holdout.
+Supported models are `knn`, `random_forest`, `logistic_regression`, and `baseline` (majority class).
+
+Use `make fit_tetramer EXPT=1` to run a single experiment and `make fit_tetramer EXPT=0` to run all experiments.
+The `EXPT=0` Make targets support incremental rebuilds and `-j` for parallel execution (for example, `make -j4 fit_tetramer EXPT=0`).
 
 ### Unsupervised Clustering with Cluster Abundance Profiling
 

@@ -19,7 +19,7 @@ Use this rule when editing `README.md`. Keep sections short, practical, and easy
 - Script purpose in plain language.
 - Primary input and primary output files.
 - A short mention of the **task-defining or output-defining** switch or mode when it is central (for example `--task` for which binary label setup is trained). Prefer that framing over operational flags used only for convenience or debugging.
-- A brief statement of how result files were generated (for example `*_results.txt` in `results/`).
+- A brief statement of how result files were generated (for example `results/tetramer/{experiment}.json` from `make fit_tetramer` and `experiments.yaml`).
 - When one script emits **several outputs**, one sentence contrasting them: what each is for, and **units or aggregation** (for example percentages aggregated over a run vs raw counts per sequence).
 - For **non-obvious tabular outputs** (for example no header row, fixed column layout), the minimum parsing contract: what a **row** represents, **column count and order**, and—if applicable—how column order aligns with a **named** labeled table elsewhere (for example the same feature order as a main CSV). Enough to parse correctly; not a full schema dump.
 - When a later section owns the method, a **short cross-reference** from the producing step (for example “see below”) plus **one sentence in the downstream section** stating inputs avoids repeating the same paths twice.
@@ -39,4 +39,4 @@ Use this rule when editing `README.md`. Keep sections short, practical, and easy
 Use this structure for classifier sections:
 1) what the script fits and on which input table,
 2) the main **task or output-defining** switch in plain words,
-3) one short line describing how the output result files were generated.
+3) one short line describing how the output metrics files were generated (for tetramer classifiers, JSON under `results/tetramer/` from `make fit_tetramer`).
