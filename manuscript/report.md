@@ -18,9 +18,15 @@ The same global split was used for downstream tasks, including cancer diagnosis 
 
 ### Classification using run-level tetramer frequencies
 
-We calculated tetramer frequencies for each run by counting 4-mers within each sequence, summing counts over all sequences in the run, then converting to percentages. 
+We calculated tetramer frequencies for each run by counting 4-mers within each sequence, summing counts over all sequences in the run, then converting those counts to percentages so each run is described by 256 frequency features.
 
-We trained a K-nearest neighbors classifier on the 256 frequency features. We applied a centered log-ratio transform (CLR), standardized the CLR coordinates, then applied PCA. The number of components in PCA starts with the maximum rank count followed by halves (128, 64, and so on capped by the training sample size) until the cumulative explained variance on the training fold falls below 0.9. We tuned number of PCA components, number of KNN nneighbors, and weights by grid search on the validation set only, then fit the chosen pipeline on the training split.
+For the baseline, we used majority-class prediction.
+
+For KNN, we applied a centered log-ratio transform (CLR), standardized the CLR coordinates, then applied PCA. PCA candidate sizes stepped down from the largest feasible rank (up to 256) by successive halves, keeping only sizes for which the leading components explained at least 90% of the variance on the training fold. We tuned the PCA size, the number of neighbors, and the distance weights by grid search on the validation split only.
+
+For random forest, we used the same CLR and standardization but did not use PCA. We tuned the number of trees (200 or 500), the maximum depth of trees (unlimited depth or a cap of 10), and the minimum number of training samples required to form a leaf (1 or 2), again using only the validation split.
+
+After choosing hyperparameters on the validation split, we fit each final pipeline on the training split.
 
 ### Classification using cluster abundance profiles
 
@@ -38,17 +44,37 @@ These CAP vectors were then used as the feature matrix for supervised classifica
 ## Results
 
 We defined two binary classification tasks: cancer vs healthy (diagnosis) and breast vs colorectal cancer (cancer type).
-Performance metrics (AUC - area under the receiver operating characteristic curve) are reported below for the test set for each task and model.
+Performance metrics (AUC - area under the receiver operating characteristic curve) are reported below for each task and model on the test and holdout splits.
 
-### KNN classification
+### Tetramer-based classifiers
 
-Table 1 reports test set ROC AUC for each binary task for the majority class baseline and the KNN classifier.
+Table 1 summarizes ROC AUC on the test and holdout splits for each task for three models: a majority-class baseline, K nearest neighbors (KNN), and random forest.
 
 <!-- classifier-table-1 -->
-| Model | Cancer diagnosis AUC | Cancer type AUC |
-| :--- | ---: | ---: |
-| Majority class | 0.500 | 0.500 |
-| KNN | 0.645 | 0.956 |
+<table>
+<thead>
+<tr>
+<th rowspan="2">Model</th>
+<th colspan="2">Cancer diagnosis AUC</th>
+<th colspan="2">Cancer type AUC</th>
+</tr>
+<tr>
+<th>Test</th><th>Holdout</th><th>Test</th><th>Holdout</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Majority class</td><td>0.500</td><td>0.500</td><td>0.500</td><td>0.500</td>
+</tr>
+<tr>
+<td>KNN</td><td>0.645</td><td>0.505</td><td>0.956</td><td>0.310</td>
+</tr>
+<tr>
+<td>Random Forest</td><td>0.705</td><td>0.558</td><td>0.983</td><td>0.457</td>
+</tr>
+</tbody>
+</table>
+
 <!-- /classifier-table-1 -->
 
-The KNN model exceeds the baseline on both binary tasks.
+On the test split, KNN and RF both outperform the majority-class baseline for each task. On the holdout split, both models have modest gains over the baseline for cancer diagnosis and score below the baseline for cancer type prediction. RF achieves higher AUC than KNN in every test and holdout split.

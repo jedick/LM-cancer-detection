@@ -41,7 +41,6 @@ fit_tetramer_classifier:
   lr_solver_grid: "lbfgs,liblinear"
   lr_class_weight_grid: "none,balanced"
   val_scoring: f1_weighted
-  baselines: false
   results_json: null
 
 # Help text for fit_tetramer_classifier.py options and configurable fields.
@@ -49,7 +48,7 @@ fit_tetramer_classifier_help:
   expt: "Optional 1-based experiment index from experiments.yaml. If omitted, use defaults only."
   csv: "Path to tetramer frequency CSV."
   label_column: "Target label column (default auto-detects sample_labels/sample_label)."
-  model: "Classifier family: knn, random_forest, or logistic_regression."
+  model: "Classifier family: knn, random_forest, logistic_regression, or baseline (majority class)."
   task: "Binary task: cancer_diagnosis or cancer_type."
   random_state: "Random seed for PCA and model initialization."
   scoring: "Validation metric to maximize during hyperparameter tuning."
@@ -65,13 +64,11 @@ fit_tetramer_classifier_help:
   lr_c_grid: "Comma-separated logistic regression C grid."
   lr_solver_grid: "Comma-separated logistic regression solver grid."
   lr_class_weight_grid: "Comma-separated logistic regression class_weight grid."
-  baselines: "Whether to print majority and stratified baseline test ROC AUC."
   results_json: "Optional output path for metrics JSON; null disables JSON output."
 
 # build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
 sequence_cache:
   n_max_per_run: 10000
-  input_suffix: ".csv.xz"
   parquet_compression: zstd
 
 # Defaults for run_uc_cap_pipeline.py.

@@ -1,6 +1,11 @@
 fit_tetramer_classifier:
   results_json_template: results/tetramer/{name}.json
   experiments:
+    - name: cancer_diagnosis_baseline
+      overrides:
+        task: cancer_diagnosis
+        model: baseline
+
     - name: cancer_diagnosis_knn
       overrides:
         task: cancer_diagnosis
@@ -10,6 +15,11 @@ fit_tetramer_classifier:
       overrides:
         task: cancer_diagnosis
         model: random_forest
+
+    - name: cancer_type_baseline
+      overrides:
+        task: cancer_type
+        model: baseline
 
     - name: cancer_type_knn
       overrides:

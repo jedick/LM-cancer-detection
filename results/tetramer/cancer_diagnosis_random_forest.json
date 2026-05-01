@@ -1,0 +1,40 @@
+{
+  "script": "fit_tetramer_classifier.py",
+  "timestamp": "2026-04-30T23:34:15.126652+00:00",
+  "task": "cancer_diagnosis",
+  "model": "random_forest",
+  "results_json": "/home/jedick/projects/LM-cancer-detection/results/tetramer/cancer_diagnosis_random_forest.json",
+  "config": {
+    "csv": "/home/sequence/LM-cancer-detection/outputs/tetramer_frequencies.csv",
+    "label_column": "sample_label",
+    "model": "random_forest",
+    "task": "cancer_diagnosis",
+    "random_state": 0,
+    "no_scaler": false,
+    "no_clr": false,
+    "clr_pseudocount": 1e-06,
+    "pca_min_variance": 0.9,
+    "baselines": false,
+    "n_neighbors": "5,15",
+    "weights": "uniform,distance",
+    "rf_n_estimators": "200,500",
+    "rf_max_depth": "none,10",
+    "rf_min_samples_leaf": "1,2",
+    "lr_c": "0.1,1.0,10.0",
+    "lr_solver": "lbfgs,liblinear",
+    "lr_class_weight": "none,balanced",
+    "scoring": "f1_weighted",
+    "pca_n_components_candidates": [],
+    "best_hyperparameters": {
+      "n_estimators": 200,
+      "max_depth": 10,
+      "min_samples_leaf": 2
+    }
+  },
+  "metrics": {
+    "test_roc_auc": 0.7046509857653954,
+    "holdout_roc_auc": 0.5580799151343706,
+    "validation_score": 0.6901361290620062,
+    "validation_metric": "f1_weighted"
+  }
+}

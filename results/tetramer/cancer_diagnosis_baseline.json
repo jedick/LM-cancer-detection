@@ -1,0 +1,37 @@
+{
+  "script": "fit_tetramer_classifier.py",
+  "timestamp": "2026-04-30T23:54:34.566926+00:00",
+  "task": "cancer_diagnosis",
+  "model": "baseline",
+  "results_json": "/home/jedick/projects/LM-cancer-detection/results/tetramer/cancer_diagnosis_baseline.json",
+  "config": {
+    "csv": "/home/sequence/LM-cancer-detection/outputs/tetramer_frequencies.csv",
+    "label_column": "sample_label",
+    "model": "baseline",
+    "task": "cancer_diagnosis",
+    "random_state": 0,
+    "no_scaler": false,
+    "no_clr": false,
+    "clr_pseudocount": 1e-06,
+    "pca_min_variance": 0.9,
+    "n_neighbors": "5,15",
+    "weights": "uniform,distance",
+    "rf_n_estimators": "200,500",
+    "rf_max_depth": "none,10",
+    "rf_min_samples_leaf": "1,2",
+    "lr_c": "0.1,1.0,10.0",
+    "lr_solver": "lbfgs,liblinear",
+    "lr_class_weight": "none,balanced",
+    "scoring": "f1_weighted",
+    "pca_n_components_candidates": [],
+    "best_hyperparameters": {
+      "strategy": "most_frequent"
+    }
+  },
+  "metrics": {
+    "test_roc_auc": 0.5,
+    "holdout_roc_auc": 0.5,
+    "validation_score": 0.37148466257668705,
+    "validation_metric": "f1_weighted"
+  }
+}

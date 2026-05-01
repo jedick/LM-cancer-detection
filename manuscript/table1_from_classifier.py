@@ -1,84 +1,142 @@
 #!/usr/bin/env python3
 """
-Read binary-task classifier logs and print a Markdown table (majority-class + KNN AUC).
+Build Table 1 from tetramer classifier JSON metrics under results/tetramer/.
 
-Default inputs (repo-root relative): results/cancer_diagnosis_results.txt and
-results/cancer_type_results.txt.
+Expects six files named {task}_{model}.json (e.g. cancer_diagnosis_knn.json),
+as written by scripts/fit_tetramer_classifier.py: tasks cancer_diagnosis and
+cancer_type; models baseline, knn, and random_forest.
+
+By default prints an HTML table with nested headers (task × test/holdout).
+Use --markdown for a GitHub-flavored pipe table with a two-line header.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
+import html
+import json
+import math
 import sys
 from pathlib import Path
+from typing import Dict, Optional, Tuple
 
-ROW_RE = re.compile(r"^\s*(KNN|Majority class):\s*ROC AUC = ([0-9.]+|nan)\s*$")
+TASKS = ("cancer_diagnosis", "cancer_type")
+MODELS = ("baseline", "knn", "random_forest")
+
+ROW_LABELS: Dict[str, str] = {
+    "baseline": "Majority class",
+    "knn": "KNN",
+    "random_forest": "Random Forest",
+}
+
+TASK_HEADER = {
+    "cancer_diagnosis": "Cancer diagnosis AUC",
+    "cancer_type": "Cancer type AUC",
+}
 
 
-def parse_aucs(text: str) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for line in text.splitlines():
-        m = ROW_RE.match(line)
-        if m:
-            out[m.group(1)] = m.group(2)
+def _load_metrics(
+    tetramer_dir: Path,
+) -> Dict[Tuple[str, str], Tuple[Optional[float], Optional[float]]]:
+    """Map (task, model) -> (test_roc_auc, holdout_roc_auc). None if JSON null."""
+    out: Dict[Tuple[str, str], Tuple[Optional[float], Optional[float]]] = {}
+    for task in TASKS:
+        for model in MODELS:
+            path = tetramer_dir / f"{task}_{model}.json"
+            if not path.is_file():
+                raise SystemExit(
+                    f"Missing expected JSON: {path}\n"
+                    f"Required files: {{task}}_{{model}}.json for "
+                    f"task in {TASKS}, model in {MODELS}."
+                )
+            data = json.loads(path.read_text(encoding="utf-8"))
+            file_task = data.get("task")
+            file_model = data.get("model")
+            if file_task != task:
+                raise SystemExit(f"{path}: expected task {task!r}, got {file_task!r}")
+            if file_model != model:
+                raise SystemExit(f"{path}: expected model {model!r}, got {file_model!r}")
+            metrics = data.get("metrics") or {}
+            test_a = metrics.get("test_roc_auc")
+            hold_a = metrics.get("holdout_roc_auc")
+            out[(task, model)] = (
+                float(test_a) if test_a is not None else None,
+                float(hold_a) if hold_a is not None else None,
+            )
     return out
 
 
-def format_table(
-    diagnosis_aucs: dict[str, str],
-    type_aucs: dict[str, str],
+def _fmt_cell(value: Optional[float], *, decimals: int) -> str:
+    if value is None:
+        return "nan"
+    if isinstance(value, float) and not math.isfinite(value):
+        return "nan"
+    return f"{value:.{decimals}f}"
+
+
+def format_table_html(
+    metrics: Dict[Tuple[str, str], Tuple[Optional[float], Optional[float]]],
     *,
     decimals: int,
 ) -> str:
-    def fmt_one(x: str) -> str:
-        if x.lower() == "nan":
-            return "nan"
-        return f"{float(x):.{decimals}f}"
+    thead = (
+        "<thead>\n"
+        "<tr>\n"
+        '<th rowspan="2">Model</th>\n'
+        f'<th colspan="2">{html.escape(TASK_HEADER["cancer_diagnosis"])}</th>\n'
+        f'<th colspan="2">{html.escape(TASK_HEADER["cancer_type"])}</th>\n'
+        "</tr>\n"
+        "<tr>\n"
+        "<th>Test</th><th>Holdout</th>"
+        "<th>Test</th><th>Holdout</th>\n"
+        "</tr>\n"
+        "</thead>\n"
+    )
+    body_rows = []
+    for model in MODELS:
+        label = html.escape(ROW_LABELS[model])
+        cells = []
+        for task in TASKS:
+            test_v, hold_v = metrics[(task, model)]
+            cells.append(_fmt_cell(test_v, decimals=decimals))
+            cells.append(_fmt_cell(hold_v, decimals=decimals))
+        tds = "".join(f"<td>{html.escape(c)}</td>" for c in cells)
+        body_rows.append(f"<tr>\n<td>{label}</td>{tds}\n</tr>")
+    tbody = "<tbody>\n" + "\n".join(body_rows) + "\n</tbody>\n"
+    return f"<table>\n{thead}{tbody}</table>\n"
 
-    need = ("Majority class", "KNN")
-    missing_diagnosis = [k for k in need if k not in diagnosis_aucs]
-    missing_type = [k for k in need if k not in type_aucs]
-    if missing_diagnosis or missing_type:
-        parts = []
-        if missing_diagnosis:
-            parts.append(
-                "cancer_diagnosis missing "
-                + ", ".join(missing_diagnosis)
-            )
-        if missing_type:
-            parts.append("cancer_type missing " + ", ".join(missing_type))
-        raise SystemExit(
-            "Missing rows in input logs: "
-            + "; ".join(parts)
-            + ". Expected lines like '  KNN: ROC AUC = ...'."
-        )
 
-    rows = []
-    for label in need:
-        diagnosis_auc = fmt_one(diagnosis_aucs[label])
-        type_auc = fmt_one(type_aucs[label])
-        rows.append(f"| {label} | {diagnosis_auc} | {type_auc} |")
-
-    header = "| Model | Cancer diagnosis AUC | Cancer type AUC |"
-    sep = "| :--- | ---: | ---: |"
-    return "\n".join([header, sep] + rows)
+def format_table_markdown(
+    metrics: Dict[Tuple[str, str], Tuple[Optional[float], Optional[float]]],
+    *,
+    decimals: int,
+) -> str:
+    """Pipe table: duplicate task labels on row 1 (no colspan in GFM)."""
+    d1 = TASK_HEADER["cancer_diagnosis"]
+    d2 = TASK_HEADER["cancer_type"]
+    row1 = f"| | {d1} | {d1} | {d2} | {d2} |"
+    row2 = "| Model | Test | Holdout | Test | Holdout |"
+    sep = "| :--- | ---: | ---: | ---: | ---: |"
+    lines = [row1, row2, sep]
+    for model in MODELS:
+        label = ROW_LABELS[model]
+        vals = []
+        for task in TASKS:
+            test_v, hold_v = metrics[(task, model)]
+            vals.append(_fmt_cell(test_v, decimals=decimals))
+            vals.append(_fmt_cell(hold_v, decimals=decimals))
+        lines.append(f"| {label} | " + " | ".join(vals) + " |")
+    return "\n".join(lines) + "\n"
 
 
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--diagnosis-input",
+        "--tetramer-dir",
         type=Path,
-        default=root / "results" / "cancer_diagnosis_results.txt",
-        help="Path to cancer_diagnosis classifier log (default: results/cancer_diagnosis_results.txt).",
-    )
-    p.add_argument(
-        "--type-input",
-        type=Path,
-        default=root / "results" / "cancer_type_results.txt",
-        help="Path to cancer_type classifier log (default: results/cancer_type_results.txt).",
+        default=root / "results" / "tetramer",
+        help="Directory with {task}_{model}.json files (default: results/tetramer).",
     )
     p.add_argument(
         "--decimals",
@@ -86,22 +144,22 @@ def main() -> int:
         default=3,
         help="Decimal places for AUC values (default: 3).",
     )
-    args = p.parse_args()
-    diagnosis_path: Path = args.diagnosis_input
-    type_path: Path = args.type_input
-    if not diagnosis_path.is_file():
-        raise SystemExit(f"Input not found: {diagnosis_path}")
-    if not type_path.is_file():
-        raise SystemExit(f"Input not found: {type_path}")
-
-    diagnosis_text = diagnosis_path.read_text(encoding="utf-8")
-    type_text = type_path.read_text(encoding="utf-8")
-    diagnosis_aucs = parse_aucs(diagnosis_text)
-    type_aucs = parse_aucs(type_text)
-    print(
-        format_table(diagnosis_aucs, type_aucs, decimals=args.decimals),
-        flush=True,
+    p.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Emit a pipe Markdown table instead of HTML.",
     )
+    args = p.parse_args()
+    tetramer_dir: Path = args.tetramer_dir.expanduser()
+    if not tetramer_dir.is_dir():
+        raise SystemExit(f"Not a directory: {tetramer_dir}")
+
+    metrics = _load_metrics(tetramer_dir)
+    if args.markdown:
+        text = format_table_markdown(metrics, decimals=args.decimals)
+    else:
+        text = format_table_html(metrics, decimals=args.decimals)
+    print(text, end="", flush=True)
     return 0
 
 

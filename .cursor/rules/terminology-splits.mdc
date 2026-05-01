@@ -1,0 +1,11 @@
+---
+description: Consistent names for train/val/test/holdout splits in Markdown prose
+globs: "**/*.md"
+alwaysApply: false
+---
+
+# Split terminology (Markdown)
+
+- Use **holdout** as the label for the external evaluation split (the partition assigned `holdout` in `scripts/shared_splits.py`, and metrics such as `holdout_roc_auc` / table column “Holdout”).
+- Do **not** substitute **held-out**, **held out**, or similar phrasing as the split name when you mean that same partition—keep wording aligned with code and results artifacts.
+- When contrasting with development fitting, pair **test** with **holdout** as needed (test = in-study development test split; holdout = reserved studies).

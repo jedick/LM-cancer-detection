@@ -198,7 +198,6 @@ def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
         "lr_c": str(config["lr_c_grid"]).strip(),
         "lr_solver": str(config["lr_solver_grid"]).strip(),
         "lr_class_weight": str(config["lr_class_weight_grid"]).strip(),
-        "baselines": bool(config["baselines"]),
         "results_json": config.get("results_json"),
         "experiment_index": expt,
         "experiment_overrides": dict(overrides),
@@ -536,6 +535,8 @@ def make_pipeline(
         steps.append(
             ("clf", LogisticRegression(random_state=pca_random_state, max_iter=1000))
         )
+    elif model == "baseline":
+        steps.append(("clf", DummyClassifier(strategy="most_frequent")))
     else:
         raise SystemExit(f"Unknown --model value: {model!r}")
     return Pipeline(steps)
@@ -671,6 +672,21 @@ def _tune_model_on_validation(
     n_components_grid: Sequence[int],
 ) -> TuningResult:
     prefix = str(getattr(args, "log_prefix", ""))
+    if args.model == "baseline":
+        print(
+            _prefixed(
+                prefix,
+                "Grid - baseline: DummyClassifier(strategy=most_frequent) (no hyperparameter search)",
+            ),
+            flush=True,
+        )
+        pipe.fit(splits.X_train, splits.y_train)
+        score = _score_val(splits.y_val, pipe.predict(splits.X_val), args.scoring)
+        return TuningResult(
+            best_params={"strategy": "most_frequent"},
+            validation_score=score,
+        )
+
     if args.model == "knn":
         print(
             _prefixed(
@@ -768,11 +784,6 @@ def test_binary_roc_auc(
     return auc
 
 
-def _format_auc(auc: float, *, digits: int = 6) -> str:
-    value = f"{auc:.{digits}f}" if np.isfinite(auc) else "nan"
-    return f"ROC AUC = {value}"
-
-
 def _label_counts(y: np.ndarray) -> Dict[str, int]:
     out: Dict[str, int] = {}
     for lab in y:
@@ -838,27 +849,6 @@ def _print_evaluation(model: str, result: EvaluationResult, *, prefix: str = "")
     print(_prefixed(prefix, f"  holdout: {holdout_value}"), flush=True)
 
 
-def _print_baselines(splits: TaskSplits, random_state: int) -> None:
-    print("\nTest set baselines (binary ROC AUC):", flush=True)
-    maj = DummyClassifier(strategy="most_frequent")
-    maj.fit(splits.X_train, splits.y_train)
-    maj_auc = test_binary_roc_auc(
-        splits.y_test,
-        maj.predict_proba(splits.X_test),
-        maj.classes_,
-    )
-    print(f"  Majority class: {_format_auc(maj_auc)}", flush=True)
-
-    strat = DummyClassifier(strategy="stratified", random_state=random_state)
-    strat.fit(splits.X_train, splits.y_train)
-    strat_auc = test_binary_roc_auc(
-        splits.y_test,
-        strat.predict_proba(splits.X_test),
-        strat.classes_,
-    )
-    print(f"  Stratified random: {_format_auc(strat_auc)}", flush=True)
-
-
 def _float_for_json(x: float) -> Optional[float]:
     """JSON-serializable float; None for NaN/inf."""
     if not math.isfinite(x):
@@ -903,7 +893,6 @@ def _write_results_json(
         "no_clr": args.no_clr,
         "clr_pseudocount": args.clr_pseudocount,
         "pca_min_variance": args.pca_min_variance,
-        "baselines": args.baselines,
         "n_neighbors": args.n_neighbors,
         "weights": args.weights,
         "rf_n_estimators": args.rf_n_estimators,
@@ -941,8 +930,8 @@ def _write_results_json(
 
 def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
     prefix = str(getattr(args, "log_prefix", ""))
-    if args.model == "random_forest":
-        # The existing analysis treats tree models separately and skips PCA for RF.
+    if args.model in ("random_forest", "baseline"):
+        # Tree and majority-class models skip PCA (no component search).
         print(_prefixed(prefix, "PCA - min_explained_variance: n/a, CLR: n/a"), flush=True)
         return []
 
@@ -1012,8 +1001,6 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
 
     evaluation = _evaluate_model(pipe, splits)
     _print_evaluation(args.model, evaluation, prefix=prefix)
-    if args.baselines:
-        _print_baselines(splits, args.random_state)
 
     if results_json_path is not None:
         _write_results_json(
