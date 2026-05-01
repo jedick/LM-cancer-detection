@@ -339,11 +339,7 @@ def _load_feature_table(csv_path: Path, label_column_arg: Optional[str]) -> Tupl
 def _attach_shared_splits(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
     # shared_splits computes assignments from the complete metadata table, then
     # filters them to the Runs present here. This keeps subset callers stable.
-    return add_split_column(
-        df,
-        run_metadata_csv=args.csv,
-        split_column="split",
-    )
+    return add_split_column(df, split_column="split")
 
 
 def _prepare_task_table(df: pd.DataFrame, label_column: str, task: str) -> pd.DataFrame:

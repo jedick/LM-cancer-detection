@@ -110,9 +110,7 @@ $(foreach i,$(TETRAMER_EXPERIMENT_INDICES),$(eval $(call tetramer_experiment_rul
 
 fit_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
 	cd "$(ROOT)" && $(PYTHON) scripts/run_uc_cap_pipeline.py
-	cd "$(ROOT)" && $(PYTHON) scripts/fit_uc_cap_classifier.py \
-		--run-metadata-csv "$(TETRAMER_FREQUENCIES_CSV)" \
-		--results-json
+	cd "$(ROOT)" && $(PYTHON) scripts/fit_uc_cap_classifier.py --results-json
 
 grid_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
 	cd "$(ROOT)" && $(PYTHON) scripts/grid_uc_cap_pipeline.py

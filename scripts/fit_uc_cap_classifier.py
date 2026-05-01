@@ -179,7 +179,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default_cap_csv = root / cap_pattern.format(
             n_uc=n_uc, n_clusters=n_clusters, n_cap=n_cap
         )
-        default_run_metadata = root / str(cfg["paths"]["tetramer_frequencies_csv"]).strip()
     except (OSError, KeyError, TypeError, ValueError, IndexError) as exc:
         raise SystemExit(f"Invalid pipeline config defaults in {config_path}: {exc}") from exc
 
@@ -209,12 +208,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Random state used by classifiers that need one.",
     )
     parser.add_argument(
-        "--run-metadata-csv",
-        type=Path,
-        default=default_run_metadata,
-        help="Metadata CSV used to derive shared splits (must include Run,sample_label,study_name).",
-    )
-    parser.add_argument(
         "--results-json",
         type=str,
         nargs="?",
@@ -233,16 +226,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     df = _load_cap_csv(args.csv)
-    expected_split_map = load_run_split_map(
-        args.run_metadata_csv,
-    )
+    expected_split_map = load_run_split_map(config_path=config_path)
     _validate_csv_splits(df, expected_split_map)
 
-    df = add_split_column(
-        df,
-        run_metadata_csv=args.run_metadata_csv,
-        split_column="split_from_shared",
-    )
+    df = add_split_column(df, config_path=config_path, split_column="split_from_shared")
 
     task_df = _prepare_task(df, args.task)
     feature_cols = [c for c in task_df.columns if c.startswith("cluster_")]
@@ -295,6 +282,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Test ROC AUC: {auc_str}", flush=True)
 
     if results_json_path is not None:
+        def _repo_rel_path(raw: object) -> Path:
+            path = Path(str(raw).strip())
+            return path if path.is_absolute() else root / path
+
+        datasets_csv_abs = _repo_rel_path(cfg["paths"]["datasets_csv"])
+        data_dir_abs = _repo_rel_path(cfg["paths"]["data_dir"])
         payload = {
             "script": Path(__file__).name,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -304,7 +297,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "config": {
                 "csv": str(args.csv.resolve()),
                 "random_state": args.random_state,
-                "run_metadata_csv": str(args.run_metadata_csv.resolve()),
+                "datasets_csv": str(datasets_csv_abs.resolve()),
+                "data_dir": str(data_dir_abs.resolve()),
                 "n_features": len(feature_cols),
             },
             "metrics": {

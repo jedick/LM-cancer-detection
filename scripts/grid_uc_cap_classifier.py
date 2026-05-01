@@ -79,12 +79,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Python executable used to run classifier script.",
     )
     parser.add_argument(
-        "--run-metadata-csv",
-        type=Path,
-        default=root / "outputs" / "tetramer_frequencies.csv",
-        help="Run metadata CSV for shared split reconstruction.",
-    )
-    parser.add_argument(
         "--results-dir",
         type=Path,
         default=root / "results",
@@ -105,7 +99,6 @@ def run_one(
     model: str,
     classifier_script: Path,
     python_exe: str,
-    run_metadata_csv: Path,
 ) -> str:
     cmd = [
         python_exe,
@@ -116,8 +109,6 @@ def run_one(
         task,
         "--classifier",
         model,
-        "--run-metadata-csv",
-        str(run_metadata_csv),
     ]
     proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -167,8 +158,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(f"Missing UC/CAP feature CSV: {combo.csv_path}")
     if not args.classifier_script.is_file():
         raise SystemExit(f"Classifier script not found: {args.classifier_script}")
-    if not args.run_metadata_csv.is_file():
-        raise SystemExit(f"Run metadata CSV not found: {args.run_metadata_csv}")
 
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,8 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for model in MODELS:
                 cmd_preview = (
                     f"{args.python} {args.classifier_script} --csv {combo.csv_path} "
-                    f"--task {task} --classifier {model} "
-                    f"--run-metadata-csv {args.run_metadata_csv}"
+                    f"--task {task} --classifier {model}"
                 )
                 print(cmd_preview, flush=True)
                 if args.dry_run:
@@ -191,7 +179,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     model=model,
                     classifier_script=args.classifier_script,
                     python_exe=args.python,
-                    run_metadata_csv=args.run_metadata_csv,
                 )
                 scores[(combo, model)] = score
         out_path = args.results_dir / f"uc_cap_{task}.md"

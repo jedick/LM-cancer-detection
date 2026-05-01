@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """Canonical run-level split assignment.
 
-Split assignments are always computed from the full run metadata table, then
-filtered to whatever subset a caller asks about. That keeps a Run in the same
-split whether a script is processing the whole dataset or a partial feature
-table.
+Split assignments are computed from a **deterministic** run metadata table: each
+row in ``datasets.csv`` (in file order), then each matching study CSV under
+``paths.data_dir`` / ``<cancer_type>`` / ``<study_name>.csv`` (in file order),
+keeping only rows with a valid SRA ``Run``, ``sample_used`` = TRUE
+(case-insensitive, same rule as ``calculate_tetramer_frequencies.py``), and a
+non-empty ``sample_label``. That ordering is reproducible from version-controlled
+inputs and does not depend on ``tetramer_frequencies.csv`` (which is built
+incrementally and is not deterministic).
+
+The merged table is joined to ``datasets.csv`` partitions for holdout vs
+development, then development runs are stratified 70/10/20 train/val/test.
 """
 
 from __future__ import annotations
 
+import csv
+import re
 from pathlib import Path
-from typing import Dict, Iterable, Literal, Optional, Tuple
+from typing import Dict, Iterable, List, Literal, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,6 +33,9 @@ VAL: SplitName = "val"
 TEST: SplitName = "test"
 HOLDOUT: SplitName = "holdout"
 SPLITS: Tuple[SplitName, ...] = (TRAIN, VAL, TEST, HOLDOUT)
+
+# Matches calculate_tetramer_frequencies.py / download_sra_data.py
+RUN_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
 
 
 def stratified_split_70_10_20(
@@ -63,35 +75,102 @@ def _resolve_repo_path(raw: object) -> Path:
     return path if path.is_absolute() else _repo_root() / path
 
 
-def _load_split_config(config_path: Optional[Path] = None) -> Tuple[Path, int]:
+def _load_split_config(config_path: Optional[Path] = None) -> Tuple[Path, int, Path]:
     cfg_path = config_path if config_path is not None else _default_config_path()
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     try:
         datasets_csv = _resolve_repo_path(cfg["paths"]["datasets_csv"])
         random_state = int(cfg["shared_splits"]["random_state"])
+        data_dir = _resolve_repo_path(cfg["paths"]["data_dir"])
     except (TypeError, KeyError, ValueError) as exc:
         raise SystemExit(
             f"Invalid shared split configuration in {cfg_path}: {exc}"
         ) from exc
-    return datasets_csv, random_state
+    return datasets_csv, random_state, data_dir
 
 
-def _canonical_run_metadata(run_metadata_csv: Path) -> pd.DataFrame:
-    metadata = pd.read_csv(run_metadata_csv, dtype="string")
-    label_column = "sample_labels" if "sample_labels" in metadata.columns else "sample_label"
-    required = {"Run", "study_name", label_column}
-    missing = sorted(required - set(metadata.columns))
-    if missing:
-        raise SystemExit(
-            f"Run metadata CSV missing required columns for shared splits: {missing}"
+def _row_is_sample_used(row: Mapping[str, object]) -> bool:
+    """Same rule as ``calculate_tetramer_frequencies.row_is_sample_used``."""
+    return (row.get("sample_used") or "").strip().casefold() == "true"
+
+
+def _run_metadata_from_study_csvs(datasets_csv: Path, data_dir: Path) -> pd.DataFrame:
+    """Build ordered Run metadata from ``datasets.csv`` and per-study ``data/`` CSVs."""
+    try:
+        datasets_order = pd.read_csv(
+            datasets_csv,
+            dtype="string",
+            usecols=["study_name", "cancer_type"],
         )
-    metadata = metadata.loc[:, ["Run", label_column, "study_name"]].rename(
-        columns={label_column: "sample_label"}
-    )
-    metadata = metadata.dropna(subset=["Run", "sample_label", "study_name"]).copy()
-    for col in ["Run", "sample_label", "study_name"]:
+    except ValueError as exc:
+        raise SystemExit(
+            f"datasets.csv at {datasets_csv} must include columns "
+            f"study_name and cancer_type: {exc}"
+        ) from exc
+
+    records: List[dict[str, str]] = []
+    run_first: Dict[str, Tuple[str, str]] = {}
+
+    for _, ds_row in datasets_order.iterrows():
+        study_name = str(ds_row.get("study_name") or "").strip()
+        cancer_type = str(ds_row.get("cancer_type") or "").strip()
+        if not study_name or not cancer_type:
+            continue
+
+        study_path = data_dir / cancer_type / f"{study_name}.csv"
+        if not study_path.is_file():
+            raise SystemExit(
+                "Shared splits: study data CSV not found for "
+                f"study_name={study_name!r} cancer_type={cancer_type!r} "
+                f"(expected {study_path})."
+            )
+
+        with open(study_path, newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                run = (row.get("Run") or "").strip()
+                if not run or RUN_PATTERN.match(run) is None:
+                    continue
+                if not _row_is_sample_used(row):
+                    continue
+                sample_label = (row.get("sample_label") or "").strip()
+                if not sample_label:
+                    continue
+
+                seen = run_first.get(run)
+                if seen is not None:
+                    seen_study, seen_label = seen
+                    if seen_study != study_name:
+                        raise SystemExit(
+                            f"Run {run!r} appears under multiple studies "
+                            f"({seen_study!r} and {study_name!r})."
+                        )
+                    if seen_label != sample_label:
+                        raise SystemExit(
+                            f"Run {run!r} has conflicting sample_label values "
+                            f"({seen_label!r} vs {sample_label!r}) in study {study_name!r}."
+                        )
+                    continue
+
+                run_first[run] = (study_name, sample_label)
+                records.append(
+                    {
+                        "Run": run,
+                        "sample_label": sample_label,
+                        "study_name": study_name,
+                        "cancer_type": cancer_type,
+                    }
+                )
+
+    if not records:
+        raise SystemExit(
+            "No eligible runs found in study data CSVs for shared splits "
+            "(need valid Run, sample_used=TRUE, non-empty sample_label)."
+        )
+
+    metadata = pd.DataFrame.from_records(records)
+    for col in ("Run", "sample_label", "study_name", "cancer_type"):
         metadata[col] = metadata[col].astype(str).str.strip()
-    metadata = metadata[metadata["Run"] != ""]
 
     conflicts = metadata.groupby("Run")[["sample_label", "study_name"]].nunique()
     bad_runs = conflicts[(conflicts["sample_label"] > 1) | (conflicts["study_name"] > 1)]
@@ -100,7 +179,18 @@ def _canonical_run_metadata(run_metadata_csv: Path) -> pd.DataFrame:
             "A run has conflicting sample_label or study_name values. "
             f"Example runs: {bad_runs.index[:5].tolist()}"
         )
-    return metadata.drop_duplicates(subset=["Run"])
+    return metadata
+
+
+def build_run_metadata(*, config_path: Optional[Path] = None) -> pd.DataFrame:
+    """Return the deterministic run metadata table used for shared split assignment.
+
+    Row order: ``datasets.csv`` study order, then each study file's row order.
+    Columns: ``Run``, ``sample_label``, ``study_name``, ``cancer_type`` (from
+    ``datasets.csv`` for the study's row).
+    """
+    datasets_csv, _, data_dir = _load_split_config(config_path)
+    return _run_metadata_from_study_csvs(datasets_csv, data_dir)
 
 
 def _study_partitions(datasets_csv: Path) -> pd.DataFrame:
@@ -123,14 +213,10 @@ def _study_partitions(datasets_csv: Path) -> pd.DataFrame:
     return datasets.drop_duplicates(subset=["study_name"])
 
 
-def load_run_split_map(
-    run_metadata_csv: Path,
-    *,
-    config_path: Optional[Path] = None,
-) -> Dict[str, SplitName]:
+def load_run_split_map(*, config_path: Optional[Path] = None) -> Dict[str, SplitName]:
     """Return the canonical split assignment for every Run in the metadata table."""
-    datasets_csv, random_state = _load_split_config(config_path)
-    metadata = _canonical_run_metadata(run_metadata_csv)
+    datasets_csv, random_state, data_dir = _load_split_config(config_path)
+    metadata = _run_metadata_from_study_csvs(datasets_csv, data_dir)
     datasets = _study_partitions(datasets_csv)
     run_table = metadata.merge(datasets, on="study_name", how="left")
 
@@ -169,15 +255,11 @@ def load_run_split_map(
 
 def assign_splits_for_runs(
     runs: Iterable[object],
-    run_metadata_csv: Path,
     *,
     config_path: Optional[Path] = None,
 ) -> list[SplitName]:
     """Return split names for `runs`, preserving input order."""
-    split_map = load_run_split_map(
-        run_metadata_csv,
-        config_path=config_path,
-    )
+    split_map = load_run_split_map(config_path=config_path)
     out: list[SplitName] = []
     missing: list[str] = []
     for run in runs:
@@ -198,16 +280,12 @@ def assign_splits_for_runs(
 def add_split_column(
     df: pd.DataFrame,
     *,
-    run_metadata_csv: Path,
     config_path: Optional[Path] = None,
     run_column: str = "Run",
     split_column: str = "split",
 ) -> pd.DataFrame:
     """Return a copy of `df` with canonical split assignments attached."""
-    split_map = load_run_split_map(
-        run_metadata_csv,
-        config_path=config_path,
-    )
+    split_map = load_run_split_map(config_path=config_path)
     out = df.copy()
     out[run_column] = out[run_column].astype(str)
     out[split_column] = out[run_column].map(split_map)

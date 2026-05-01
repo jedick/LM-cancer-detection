@@ -25,7 +25,8 @@ alwaysApply: true
 ## Shared split assignment
 
 - Treat **`scripts/shared_splits.py`** as the source of truth for assigning each **`Run`** to exactly one of **`train`**, **`val`**, **`test`**, or **`holdout`**.
-- Split configuration belongs in **`defaults.yaml`** (`paths.datasets_csv`, `shared_splits.random_state`). Callers should not pass datasets paths or split random states around unless there is a deliberate reason to override the shared contract.
+- Split metadata is built **deterministically** from **`datasets.csv`** row order plus each study’s **`data/<cancer_type>/<study_name>.csv`** row order (same `Run` / `sample_used` / `sample_label` rules as tetramer counting). Do **not** derive split tables from **`outputs/tetramer_frequencies.csv`** (incremental, non-version-controlled).
+- Split configuration belongs in **`defaults.yaml`** (`paths.datasets_csv`, `paths.data_dir`, `shared_splits.random_state`). Callers should not pass datasets paths or split random states around unless there is a deliberate reason to override the shared contract.
 - Downstream scripts should consume a single split value per run instead of maintaining separate development/holdout partition arrays and train/val/test split arrays.
 - For small run-level metadata tables, prefer **pandas** table operations when they make data loading, joins, and split assignment easier to read.
 

@@ -33,7 +33,7 @@ import pyarrow.compute as pc
 import yaml
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import PCA
-from shared_splits import load_run_split_map
+from shared_splits import build_run_metadata, load_run_split_map
 
 
 RUN_FILE_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
@@ -264,13 +264,6 @@ def summarize_cap_sparsity(
     return float(nnz.mean()), float(np.median(nnz)), int(nnz.min()), int(nnz.max())
 
 
-def load_run_metadata(path: Path) -> Optional[pd.DataFrame]:
-    if not path.is_file():
-        return None
-    meta = pd.read_csv(path, usecols=["cancer_type", "study_name", "Run", "sample_label"])
-    return meta.drop_duplicates(subset=["study_name", "Run"])
-
-
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
     default_config_path = root / "defaults.yaml"
@@ -285,7 +278,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         first_grid = cfg["uc_cap_pipeline_grid"][0]
         default_outputs_dir = root / str(paths_cfg["outputs_dir"]).strip()
         default_out_dir = root / str(paths_cfg["uc_cap_root"]).strip()
-        default_run_metadata_csv = root / str(paths_cfg["tetramer_frequencies_csv"]).strip()
         default_n_uc = int(first_grid["n_uc"])
         default_n_cap = str(first_grid["n_cap"])
         default_n_clusters = int(first_grid["n_clusters"])
@@ -322,12 +314,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=Path,
         default=default_outputs_dir,
         help="Root directory containing per-run sequence count files.",
-    )
-    parser.add_argument(
-        "--run-metadata-csv",
-        type=Path,
-        default=default_run_metadata_csv,
-        help="Run metadata CSV used to append labels to CAP output.",
     )
     parser.add_argument(
         "--out-dir",
@@ -466,14 +452,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit("No sequence rows found in cache for requested settings.")
     if len(cache_df.columns) != 259:
         raise SystemExit("Cache schema mismatch: expected 259 columns.")
-    metadata = load_run_metadata(args.run_metadata_csv)
-    if metadata is None:
-        raise SystemExit(
-            f"Run metadata CSV required for shared splits not found: {args.run_metadata_csv}"
-        )
-    run_split_map = load_run_split_map(
-        args.run_metadata_csv,
-    )
+    metadata = build_run_metadata(config_path=args.config).loc[
+        :, ["cancer_type", "study_name", "Run", "sample_label"]
+    ]
+    metadata = metadata.drop_duplicates(subset=["study_name", "Run"])
+    run_split_map = load_run_split_map(config_path=args.config)
     train_runs = {run for run, split in run_split_map.items() if split == "train"}
 
     uc_dir = args.out_dir / f"uc{args.n_uc}_k{args.n_clusters}"
@@ -600,12 +583,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     cap_df.to_csv(cap_out, index=False)
     split_counts = cap_df["split"].value_counts().to_dict()
+    paths_cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))["paths"]
+
+    def _resolve_cfg_path(raw: object) -> Path:
+        p = Path(str(raw).strip())
+        return p if p.is_absolute() else repo_root / p
+
+    datasets_csv_abs = _resolve_cfg_path(paths_cfg["datasets_csv"])
+    data_dir_abs = _resolve_cfg_path(paths_cfg["data_dir"])
     with open(config_out, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "cache_parquet": str(args.cache_parquet),
                 "outputs_dir": str(args.outputs_dir),
-                "run_metadata_csv": str(args.run_metadata_csv),
+                "datasets_csv": str(datasets_csv_abs),
+                "data_dir": str(data_dir_abs),
                 "n_uc": args.n_uc,
                 "n_cap": n_cap,
                 "n_clusters": args.n_clusters,
