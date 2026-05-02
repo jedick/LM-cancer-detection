@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
+import yaml
+
 
 TASKS: Tuple[str, str] = ("cancer_diagnosis", "cancer_type")
 MODELS: Tuple[str, str, str] = ("random_forest", "logistic_regression", "svm")
@@ -72,6 +74,9 @@ class Combo:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     root = Path(__file__).resolve().parent.parent
+    paths = yaml.safe_load((root / "defaults.yaml").read_text(encoding="utf-8"))["paths"]
+    results_rel = Path(str(paths["results_dir"]).strip())
+    default_results_dir = results_rel if results_rel.is_absolute() else root / results_rel
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--classifier-script",
@@ -87,8 +92,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--results-dir",
         type=Path,
-        default=root / "results",
-        help="Directory where markdown files are written.",
+        default=default_results_dir,
+        help="Directory where markdown files are written (default: paths.results_dir).",
     )
     parser.add_argument(
         "--dry-run",

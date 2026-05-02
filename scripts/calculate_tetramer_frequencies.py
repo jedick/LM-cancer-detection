@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
+import yaml
+
 try:
     import numpy as np
     from numba import njit
@@ -367,25 +369,38 @@ def counts_from_sequence_rows(path: Path) -> Tuple[Optional[List[int]], Optional
     return totals, None
 
 
+def _default_paths_from_defaults_yaml(repo_root: Path) -> Tuple[Path, Path, Path]:
+    """``(data_dir, fasta_dir, tetramer_frequencies_csv)`` from ``defaults.yaml`` ``paths``."""
+    cfg_path = repo_root / "defaults.yaml"
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    paths = cfg["paths"]
+
+    def _resolve(key: str) -> Path:
+        p = Path(str(paths[key]).strip())
+        return p if p.is_absolute() else repo_root / p
+
+    return _resolve("data_dir"), _resolve("fasta_dir"), _resolve("tetramer_frequencies_csv")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--data-dir",
         type=Path,
         default=None,
-        help="Directory containing study CSV files (default: <repo>/data)",
+        help="Directory containing study CSV files (default: paths.data_dir in defaults.yaml)",
     )
     parser.add_argument(
         "--fasta-dir",
         type=Path,
         default=None,
-        help="Root directory of downloaded FASTA gzip files (default: <repo>/fasta)",
+        help="Root directory of downloaded FASTA gzip files (default: paths.fasta_dir)",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=None,
-        help="Output CSV path (default: <repo>/outputs/tetramer_frequencies.csv)",
+        help="Output CSV path (default: paths.tetramer_frequencies_csv)",
     )
     parser.add_argument(
         "--first-run-per-study",
@@ -412,9 +427,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent
-    data_dir = args.data_dir or (repo_root / "data")
-    fasta_root = args.fasta_dir or (repo_root / "fasta")
-    output_path = args.output or (repo_root / "outputs" / "tetramer_frequencies.csv")
+    def_data, def_fasta, def_out = _default_paths_from_defaults_yaml(repo_root)
+    data_dir = args.data_dir or def_data
+    fasta_root = args.fasta_dir or def_fasta
+    output_path = args.output or def_out
 
     if not data_dir.is_dir():
         print(f"Error: data directory not found: {data_dir}", file=sys.stderr)

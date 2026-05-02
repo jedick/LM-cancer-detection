@@ -20,6 +20,8 @@ FEAT_ARG := $(if $(strip $(FEAT)),--feat $(FEAT),)
 
 # Expand fit_tetramer experiment output paths from experiments.yaml template+names.
 TETRAMER_EXPERIMENT_OUTPUTS := $(shell $(PYTHON) -c "import yaml,pathlib; r=pathlib.Path('$(ROOT)'); cfg=yaml.safe_load((r/'experiments.yaml').read_text(encoding='utf-8')); sec=cfg.get('fit_classifier',{}); tpl=sec.get('results_json_template','results/{features}/{name}.json'); exps=sec.get('experiments',[]); print(' '.join(str((r/tpl.format(name=e['name'], features='tetramer')).resolve()) for e in exps))")
+# Experiment name stems (same order as --expt 1..N); used for results/uc_cap/<feat>/<name>.json.
+EXPERIMENT_NAMES := $(shell $(PYTHON) -c "import yaml,pathlib; r=pathlib.Path('$(ROOT)'); cfg=yaml.safe_load((r/'experiments.yaml').read_text(encoding='utf-8')); exps=cfg.get('fit_classifier',{}).get('experiments',[]); print(' '.join(str(e['name']) for e in exps))")
 # Enumerate fit_tetramer experiments so rules can run by --expt index.
 TETRAMER_EXPERIMENT_INDICES := $(shell seq 1 $(words $(TETRAMER_EXPERIMENT_OUTPUTS)))
 # Select a single fit_tetramer output path by 1-based EXPT index.
@@ -29,6 +31,11 @@ TETRAMER_EXPERIMENT_OUTPUT := $(if $(filter-out 0,$(strip $(EXPT))),$(word $(EXP
 UC_CAP_FEATURE_OUTPUTS := $(shell $(PYTHON) $(ROOT)/helpers/list_uc_cap_feature_outputs.py "$(ROOT)")
 UC_CAP_FEATURE_INDICES := $(shell seq 1 $(words $(UC_CAP_FEATURE_OUTPUTS)))
 UC_CAP_FEATURE_OUTPUT := $(if $(filter-out 0,$(strip $(FEAT))),$(word $(FEAT),$(UC_CAP_FEATURE_OUTPUTS)),)
+# Deferred: FEAT/EXPT come from the command line when these are expanded as fit_uc_cap prerequisites.
+UC_CAP_SINGLE_EXPT_ALL_FEAT_OUTPUTS = $(foreach f,$(UC_CAP_FEATURE_INDICES),$(ROOT)/results/uc_cap/$(f)/$(word $(EXPT),$(EXPERIMENT_NAMES)).json)
+UC_CAP_SINGLE_FEAT_ALL_EXPT_OUTPUTS = $(foreach e,$(TETRAMER_EXPERIMENT_INDICES),$(ROOT)/results/uc_cap/$(FEAT)/$(word $(e),$(EXPERIMENT_NAMES)).json)
+# Deferred: all (feature set x experiment) JSON paths under results/uc_cap/<feat>/ (same rules as partial sweeps).
+UC_CAP_FULL_GRID_OUTPUTS = $(foreach f,$(UC_CAP_FEATURE_INDICES),$(foreach e,$(TETRAMER_EXPERIMENT_INDICES),$(ROOT)/results/uc_cap/$(f)/$(word $(e),$(EXPERIMENT_NAMES)).json))
 # Baseline CAP CSV (defaults.yaml merge only); real file target for default ``make run_uc_cap``.
 UC_CAP_BASELINE_CAP_CSV := $(shell $(PYTHON) $(ROOT)/helpers/list_uc_cap_feature_outputs.py "$(ROOT)" --baseline)
 
@@ -64,9 +71,12 @@ help:
 	@echo "      Optional: EXPT=0 builds all configured experiments incrementally."
 	@echo ""
 	@echo "  make fit_uc_cap"
-	@echo "      fit_classifier.py --uc_cap on the baseline CAP CSV; default passes --results-json"
-	@echo "      (metrics under results/scratch/). Prereq: baseline CAP. Optional: FEAT=<n>."
-	@echo "      Optional: FEAT=0 classifies every configured UC/CAP feature set (1..N)."
+	@echo "      fit_classifier.py --uc_cap; default uses baseline CAP and --results-json (scratch)."
+	@echo "      FEAT=<n> / EXPT=<n> mirror experiments.yaml (same indices as run_uc_cap / fit_tetramer)."
+	@echo "      FEAT=0 EXPT=<n>: one experiment, all feature sets → results/uc_cap/1..N/<name>.json."
+	@echo "      FEAT=<n> EXPT=0: one feature set, all experiments → results/uc_cap/<n>/<name>.json"
+	@echo "      (same filenames as make fit_tetramer EXPT=0). FEAT=0 EXPT=0: full grid (every feat dir"
+	@echo "      holds every experiment JSON). Disallowed: FEAT=0 or EXPT=0 alone without the other axis."
 	@echo ""
 	@echo "  make run_uc_cap"
 	@echo "      Build the baseline CAP CSV (defaults.yaml) if needed; incremental vs inputs."
@@ -154,24 +164,56 @@ endef
 
 $(foreach i,$(UC_CAP_FEATURE_INDICES),$(eval $(call uc_cap_feature_rule,$(i))))
 
+ifneq ($(filter fit_uc_cap,$(MAKECMDGOALS)),)
 ifeq ($(strip $(FEAT)),0)
-fit_uc_cap: $(UC_CAP_FEATURE_OUTPUTS) $(ROOT)/scripts/fit_classifier.py \
+ifeq ($(strip $(EXPT)),)
+$(error fit_uc_cap: FEAT=0 requires EXPT=0 (full grid) or EXPT=1..N (one experiment, all feature sets).)
+endif
+endif
+ifeq ($(strip $(EXPT)),0)
+ifeq ($(strip $(FEAT)),)
+$(error fit_uc_cap: EXPT=0 requires FEAT=1..N, or FEAT=0 EXPT=0 for the full grid.)
+endif
+endif
+endif
+
+# results/uc_cap/<feat_index>/<experiment_name>.json (all sweep modes including FEAT=0 EXPT=0).
+define uc_cap_subdir_json_rule
+$(ROOT)/results/uc_cap/$(1)/$(word $(2),$(EXPERIMENT_NAMES)).json: $(word $(1),$(UC_CAP_FEATURE_OUTPUTS)) \
+		$(ROOT)/scripts/fit_classifier.py \
+		$(ROOT)/defaults.yaml \
+		$(ROOT)/experiments.yaml
+	cd "$(ROOT)" && $(PYTHON) scripts/fit_classifier.py --uc_cap --feat $(1) --expt $(2) --results-json $(ROOT)/results/uc_cap/$(1)/$(word $(2),$(EXPERIMENT_NAMES)).json
+endef
+$(foreach f,$(UC_CAP_FEATURE_INDICES),$(foreach e,$(TETRAMER_EXPERIMENT_INDICES),$(eval $(call uc_cap_subdir_json_rule,$(f),$(e)))))
+
+ifeq ($(strip $(FEAT)),0)
+ifeq ($(strip $(EXPT)),0)
+fit_uc_cap: $(UC_CAP_FULL_GRID_OUTPUTS) $(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
-	@set -e; for i in $(UC_CAP_FEATURE_INDICES); do \
-		cd "$(ROOT)" && $(PYTHON) scripts/fit_classifier.py --uc_cap --feat $$i --results-json; \
-	done
+	@echo "Up to date: fit_uc_cap full grid (results/uc_cap/<k>/ for each experiment JSON)."
+else
+fit_uc_cap: $(UC_CAP_SINGLE_EXPT_ALL_FEAT_OUTPUTS) $(ROOT)/scripts/fit_classifier.py \
+		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
+	@echo "Up to date: fit_uc_cap EXPT=$(EXPT) (all feature sets: results/uc_cap/<k>/$(word $(EXPT),$(EXPERIMENT_NAMES)).json)"
+endif
+else ifeq ($(strip $(EXPT)),0)
+ifneq ($(strip $(FEAT)),)
+fit_uc_cap: $(UC_CAP_SINGLE_FEAT_ALL_EXPT_OUTPUTS)
+	@echo "Up to date: fit_uc_cap FEAT=$(FEAT) (all experiments under results/uc_cap/$(FEAT)/)"
+endif
 else ifneq ($(strip $(FEAT)),)
 fit_uc_cap: $(UC_CAP_FEATURE_OUTPUT) $(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
 	@if test -z "$(UC_CAP_FEATURE_OUTPUT)"; then \
-		echo "Invalid FEAT=$(FEAT). Use FEAT=0 for all feature sets, or FEAT=1..N from experiments.yaml."; \
+		echo "Invalid FEAT=$(FEAT). Use FEAT=1..N from experiments.yaml, FEAT=0 EXPT=0 (full grid), or FEAT=0 EXPT=1..N."; \
 		exit 2; \
 	fi
-	cd "$(ROOT)" && $(PYTHON) scripts/fit_classifier.py --uc_cap --feat $(FEAT) --results-json
+	cd "$(ROOT)" && $(PYTHON) scripts/fit_classifier.py --uc_cap --feat $(FEAT) $(EXPT_ARG) --results-json
 else
 fit_uc_cap: $(UC_CAP_BASELINE_CAP_CSV) $(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
-	cd "$(ROOT)" && $(PYTHON) scripts/fit_classifier.py --uc_cap --results-json
+	cd "$(ROOT)" && $(PYTHON) scripts/fit_classifier.py --uc_cap $(EXPT_ARG) --results-json
 endif
 
 TARGET ?=

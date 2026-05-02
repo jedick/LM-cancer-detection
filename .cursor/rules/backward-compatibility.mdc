@@ -1,0 +1,10 @@
+---
+description: Do not preserve backward compatibility unless the user asks for it.
+alwaysApply: true
+---
+
+# Backward compatibility
+
+While this repo is under active development, **do not** add or keep compatibility shims for old file formats, JSON schemas, CLI flags, or Make targets **unless the user explicitly requests** backward compatibility.
+
+Prefer updating consumers (scripts, helpers, docs) to match the current contract and regenerating artifacts when shapes change.
