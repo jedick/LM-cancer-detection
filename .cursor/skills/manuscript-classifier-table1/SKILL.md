@@ -2,7 +2,7 @@
 name: manuscript-classifier-table1
 description: >-
   Regenerates Table 1 in manuscript/report.md from tetramer classifier JSON
-  metrics under results/tetramer/. Runs manuscript/table1_from_classifier.py and
+  metrics under results/tetramer/. Runs helpers/table1_from_classifier.py and
   replaces the table between HTML comment markers. Use when tetramer JSON
   results change, when updating the Results table, or when the user asks to
   refresh Table 1.
@@ -24,7 +24,7 @@ Keep **Table 1** in `manuscript/report.md` in sync with **six JSON files** under
 1. From the **repository root**, run:
 
    ```bash
-   python manuscript/table1_from_classifier.py
+   python helpers/table1_from_classifier.py
    ```
 
    Optional overrides:

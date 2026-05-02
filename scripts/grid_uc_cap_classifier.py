@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Run UC/CAP classifier grid and write markdown result tables.
 
-For each UC/CAP parameter combination from scripts/run_uc_cap_pipeline.sh:
+For each (n_uc, n_clusters, n_cap) triple in the hardcoded GRID below (aligned with
+historical pipeline grids), runs ``fit_uc_cap_classifier.py`` on the CAP CSV at
+``outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv``. Those files are produced by
+``scripts/run_uc_cap_pipeline.py`` (for example via ``make run_uc_cap`` / ``FEAT=...``),
+using ``defaults.yaml`` and ``experiments.yaml`` ``run_uc_cap_pipeline`` rows.
+
+Grid constants (must match generated paths):
   - n_uc in {1000, 2000}
   - K in {2000, 5000}
   - n_cap in {5000, 10000}

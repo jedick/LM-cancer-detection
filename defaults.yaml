@@ -11,6 +11,7 @@ paths:
   # Ephemeral / local experiment outputs (gitignored); finalized copies go under results/
   results_scratch_dir: results/scratch
   datasets_csv: datasets.csv
+  # Run-level tetramer frequency table (input for fit_tetramer_classifier.py).
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
   # CAP CSV layout from run_uc_cap_pipeline.py
@@ -20,85 +21,83 @@ paths:
 shared_splits:
   random_state: 0
 
-# Run-level tetramer pipeline defaults.
-# The script now takes only --expt and resolves all values from this section,
-# then applies per-experiment overrides from experiments.yaml.
+# Run-level tetramer pipeline defaults. fit_tetramer_classifier.py takes only --expt; it reads
+# this section and applies per-experiment overrides from experiments.yaml.
 fit_tetramer_classifier:
+  # Target label column; null = auto-detect sample_labels / sample_label.
   label_column: null
+  # Classifier family: knn, random_forest, logistic_regression, or baseline (majority class).
   model: knn
+  # Binary task: cancer_diagnosis or cancer_type.
   task: cancer_diagnosis
+  # Random seed for PCA and model initialization.
   random_state: 0
+  # Whether StandardScaler is applied before PCA.
   use_scaler: true
+  # Whether CLR is applied before scaler/PCA.
   use_clr: true
+  # Additive constant before log in CLR.
   clr_pseudocount: 1.0e-6
+  # Minimum cumulative explained variance for PCA candidate grid.
   pca_min_variance: 0.9
+  # Comma-separated KNN n_neighbors grid.
   n_neighbors_grid: "5,15"
+  # Comma-separated KNN weights grid.
   weights_grid: "uniform,distance"
+  # Comma-separated random forest n_estimators grid.
   rf_n_estimators_grid: "200,500"
+  # Comma-separated random forest max_depth grid (use 'none' for unlimited).
   rf_max_depth_grid: "none,10"
+  # Comma-separated random forest min_samples_leaf grid.
   rf_min_samples_leaf_grid: "1,2"
+  # Comma-separated logistic regression C grid.
   lr_c_grid: "0.1,1.0,10.0"
+  # Comma-separated logistic regression solver grid.
   lr_solver_grid: "lbfgs,liblinear"
+  # Comma-separated logistic regression class_weight grid (use 'none' for default).
   lr_class_weight_grid: "none,balanced"
+  # Validation metric to maximize during hyperparameter tuning.
   val_scoring: f1_weighted
+  # Optional output path for metrics JSON; null disables JSON output (experiments may set via template).
   results_json: null
-
-# Help text for fit_tetramer_classifier.py options and configurable fields.
-fit_tetramer_classifier_help:
-  expt: "Optional 1-based experiment index from experiments.yaml. If omitted, use defaults only."
-  csv: "Path to tetramer frequency CSV."
-  label_column: "Target label column (default auto-detects sample_labels/sample_label)."
-  model: "Classifier family: knn, random_forest, logistic_regression, or baseline (majority class)."
-  task: "Binary task: cancer_diagnosis or cancer_type."
-  random_state: "Random seed for PCA and model initialization."
-  scoring: "Validation metric to maximize during hyperparameter tuning."
-  use_scaler: "Whether StandardScaler is applied before PCA."
-  use_clr: "Whether CLR is applied before scaler/PCA."
-  clr_pseudocount: "Additive constant before log in CLR."
-  pca_min_variance: "Minimum cumulative explained variance for PCA candidate grid."
-  n_neighbors_grid: "Comma-separated KNN n_neighbors grid."
-  weights_grid: "Comma-separated KNN weights grid."
-  rf_n_estimators_grid: "Comma-separated random forest n_estimators grid."
-  rf_max_depth_grid: "Comma-separated random forest max_depth grid (use 'none')."
-  rf_min_samples_leaf_grid: "Comma-separated random forest min_samples_leaf grid."
-  lr_c_grid: "Comma-separated logistic regression C grid."
-  lr_solver_grid: "Comma-separated logistic regression solver grid."
-  lr_class_weight_grid: "Comma-separated logistic regression class_weight grid."
-  results_json: "Optional output path for metrics JSON; null disables JSON output."
 
 # build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
 sequence_cache:
   n_max_per_run: 10000
   parquet_compression: zstd
 
-# Defaults for run_uc_cap_pipeline.py.
-run_uc_cap_defaults:
-  random_state: 0
-  pca_variance: 0.95
-  pca_components: null
-  seq_normalize: true
-  seq_log1p: false
-  cap_transform: none
-  clr_pseudocount: 1.0e-6
-  batch_size: 8192
-  max_iter: 200
-  chunk_size: 20000
+# Baseline UC/CAP pipeline parameters. The script takes only --feat; list entries here are
+# merged in order into one baseline dict, then experiments.yaml rows merge over that for --feat >= 1 (Makefile FEAT=...).
+run_uc_cap_pipeline:
+  # n_uc: Number of cached sequences per run used to fit UC (MiniBatchKMeans on train runs only).
+  # n_clusters: K for k-means (number of cluster centroids / CAP feature dimension).
+  # n_cap: Sequences per run for CAP, or the string 'all' to stream every sequence from per-run
+  #   count files under paths.outputs_dir (see run_uc_cap_pipeline.py).
+  - { n_uc: 10, n_clusters: 20, n_cap: 50 }
+  # Remaining keys (second list fragment merges over the triple above).
+  - random_state: 0 # Random seed for PCA and MiniBatchKMeans.
+    # Cumulative explained-variance target for PCA when pca_components is null.
+    pca_variance: 0.95
+    # Fixed PCA component count before k-means; null means use pca_variance instead.
+    pca_components: null
+    # Whether to normalize each sequence 4-mer vector to relative frequencies before further transforms.
+    seq_normalize: true
+    # Whether to apply log1p after optional per-sequence normalization.
+    seq_log1p: false
+    # Post-aggregation transform on run-level CAP vectors: none or clr.
+    cap_transform: 'none'
+    # Pseudocount added to proportions when cap_transform is clr.
+    clr_pseudocount: 1.0e-6
+    # MiniBatchKMeans batch size.
+    batch_size: 8192
+    # MiniBatchKMeans max iterations.
+    max_iter: 200
+    # CSV row chunk size when n_cap is all (streaming from per-run count files).
+    chunk_size: 20000
 
 # UC/CAP supervised models (fit_uc_cap_classifier.py, grid_uc_cap_classifier.py)
 uc_cap_classifiers:
   - random_forest
   - logistic_regression
   - svm
-
-# Exact (n_uc, n_clusters, n_cap) triples used by scripts/grid_uc_cap_pipeline.py.
-# n_uc is 1000 or 2000; n_clusters is 2000 or 5000; n_cap is 5000 or 10000.
-uc_cap_pipeline_grid:
-  - { n_uc: 1000, n_clusters: 2000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 5000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 1000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
 

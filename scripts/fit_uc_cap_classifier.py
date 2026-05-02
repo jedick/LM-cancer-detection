@@ -171,10 +171,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         default_task = str(cfg["fit_tetramer_classifier"]["task"]).strip()
         default_classifier = str(cfg["uc_cap_classifiers"][0]).strip()
-        first_grid = cfg["uc_cap_pipeline_grid"][0]
-        n_uc = int(first_grid["n_uc"])
-        n_clusters = int(first_grid["n_clusters"])
-        n_cap = int(first_grid["n_cap"])
+        first_row: Dict[str, object] = {}
+        for frag in cfg["run_uc_cap_pipeline"]:
+            if not isinstance(frag, dict):
+                raise SystemExit("defaults.yaml run_uc_cap_pipeline entries must be mappings")
+            first_row = {**first_row, **frag}
+        n_uc = int(first_row["n_uc"])
+        n_clusters = int(first_row["n_clusters"])
+        n_cap = int(first_row["n_cap"])
         cap_pattern = str(cfg["paths"]["cap_csv_pattern"]).strip()
         default_cap_csv = root / cap_pattern.format(
             n_uc=n_uc, n_clusters=n_clusters, n_cap=n_cap
@@ -187,7 +191,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--csv",
         type=Path,
         default=default_cap_csv,
-        help="Input CAP feature CSV (default: first uc_cap_pipeline_grid entry in defaults config).",
+        help="Input CAP feature CSV (default: merged run_uc_cap_pipeline baseline in defaults config).",
     )
     parser.add_argument(
         "--task",

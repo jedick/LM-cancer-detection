@@ -95,22 +95,15 @@ class EvaluationResult:
 
 # ----- Config loading -----
 
+_EXPT_HELP = (
+    "Optional 1-based experiment index from experiments.yaml. "
+    "If omitted, use defaults.yaml fit_tetramer_classifier only."
+)
 
-def parse_experiment_arg(argv: Optional[Sequence[str]], root: Path) -> int:
-    defaults_path = root / "defaults.yaml"
-    try:
-        cfg = yaml.safe_load(defaults_path.read_text(encoding="utf-8"))
-        help_text = str(
-            cfg.get("fit_tetramer_classifier_help", {}).get(
-                "expt",
-                "1-based experiment index from experiments.yaml.",
-            )
-        )
-    except OSError as exc:
-        raise SystemExit(f"Cannot read defaults file {defaults_path}: {exc}") from exc
 
+def parse_experiment_arg(argv: Optional[Sequence[str]]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expt", type=int, default=None, help=help_text)
+    parser.add_argument("--expt", type=int, default=None, help=_EXPT_HELP)
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.expt is not None and args.expt <= 0:
         raise SystemExit("--expt must be a positive integer (1-based index).")
@@ -1012,7 +1005,7 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     root = Path(__file__).resolve().parent.parent
-    expt = parse_experiment_arg(argv, root)
+    expt = parse_experiment_arg(argv)
     args = _load_experiment_args(root, expt=expt)
     return run_classifier(args, root)
 

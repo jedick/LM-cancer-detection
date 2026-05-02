@@ -15,6 +15,8 @@ UC_CAP_ROOT := $(call yaml_section_value,paths,uc_cap_root)
 SEQUENCE_CACHE_N_MAX := $(call yaml_section_value,sequence_cache,n_max_per_run)
 EXPT ?=
 EXPT_ARG := $(if $(strip $(EXPT)),--expt $(EXPT),)
+FEAT ?=
+FEAT_ARG := $(if $(strip $(FEAT)),--feat $(FEAT),)
 
 # Expand fit_tetramer experiment output paths from experiments.yaml template+names.
 TETRAMER_EXPERIMENT_OUTPUTS := $(shell $(PYTHON) -c "import yaml,pathlib; r=pathlib.Path('$(ROOT)'); cfg=yaml.safe_load((r/'experiments.yaml').read_text(encoding='utf-8')); sec=cfg.get('fit_tetramer_classifier',{}); tpl=sec.get('results_json_template','results/tetramer/{name}.json'); exps=sec.get('experiments',[]); print(' '.join(str((r/tpl.format(name=e['name'])).resolve()) for e in exps))")
@@ -22,6 +24,11 @@ TETRAMER_EXPERIMENT_OUTPUTS := $(shell $(PYTHON) -c "import yaml,pathlib; r=path
 TETRAMER_EXPERIMENT_INDICES := $(shell seq 1 $(words $(TETRAMER_EXPERIMENT_OUTPUTS)))
 # Select a single fit_tetramer output path by 1-based EXPT index.
 TETRAMER_EXPERIMENT_OUTPUT := $(if $(filter-out 0,$(strip $(EXPT))),$(word $(EXPT),$(TETRAMER_EXPERIMENT_OUTPUTS)),)
+
+# CAP CSV outputs for each run_uc_cap_pipeline row in experiments.yaml (merged with defaults).
+UC_CAP_FEATURE_OUTPUTS := $(shell $(PYTHON) $(ROOT)/helpers/list_uc_cap_feature_outputs.py "$(ROOT)")
+UC_CAP_FEATURE_INDICES := $(shell seq 1 $(words $(UC_CAP_FEATURE_OUTPUTS)))
+UC_CAP_FEATURE_OUTPUT := $(if $(filter-out 0,$(strip $(FEAT))),$(word $(FEAT),$(UC_CAP_FEATURE_OUTPUTS)),)
 
 TETRA_CSV := $(ROOT)/$(TETRAMER_FREQUENCIES_CSV)
 SEQ_CACHE := $(ROOT)/$(UC_CAP_ROOT)/sequence_counts_first_$(SEQUENCE_CACHE_N_MAX)_all_runs.parquet
@@ -31,7 +38,7 @@ DATA_CSVS := $(shell find $(ROOT)/$(DATA_DIR) -type f -name '*.csv' 2>/dev/null)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help download_data tetramer_frequencies sequence_cache fit_tetramer fit_uc_cap grid_uc_cap explain explain-%
+.PHONY: help download_data tetramer_frequencies sequence_cache fit_tetramer fit_uc_cap run_uc_cap explain explain-%
 
 help:
 	@echo "LM-cancer-detection Makefile (script defaults from defaults.yaml)"
@@ -55,11 +62,13 @@ help:
 	@echo "      Optional: EXPT=0 builds all configured experiments incrementally."
 	@echo ""
 	@echo "  make fit_uc_cap"
-	@echo "      Run fit_uc_cap_classifier.py with script defaults;"
-	@echo "      use script CLI directly for non-default settings."
+	@echo "      Run run_uc_cap_pipeline.py then fit_uc_cap_classifier.py (baseline only;"
+	@echo "      Makefile FEAT and EXPT are reserved for future use and are not passed yet)."
 	@echo ""
-	@echo "  make grid_uc_cap"
-	@echo "      Run scripts/grid_uc_cap_pipeline.py (grid from defaults.yaml)."
+	@echo "  make run_uc_cap"
+	@echo "      Run run_uc_cap_pipeline.py (defaults.yaml baseline)."
+	@echo "      Optional: FEAT=<n> passes --feat <n> (1-based feature-set index in experiments.yaml)."
+	@echo "      Optional: FEAT=0 builds all configured UC/CAP pipeline feature sets incrementally."
 	@echo ""
 	@echo "  make explain TARGET=<make_target>"
 	@echo "      Compact dependency/mtime explanation using make --trace."
@@ -108,12 +117,34 @@ endef
 
 $(foreach i,$(TETRAMER_EXPERIMENT_INDICES),$(eval $(call tetramer_experiment_rule,$(i))))
 
+ifeq ($(strip $(FEAT)),0)
+run_uc_cap: $(UC_CAP_FEATURE_OUTPUTS)
+	@echo "Up to date: all run_uc_cap pipeline feature sets"
+else ifneq ($(strip $(FEAT)),)
+run_uc_cap: $(UC_CAP_FEATURE_OUTPUT)
+	@if test -z "$(UC_CAP_FEATURE_OUTPUT)"; then \
+		echo "Invalid FEAT=$(FEAT). Use FEAT=0 for all, or FEAT=1..N from experiments.yaml."; \
+		exit 2; \
+	fi
+else
+run_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
+	cd "$(ROOT)" && $(PYTHON) scripts/run_uc_cap_pipeline.py
+endif
+
+define uc_cap_feature_rule
+$(word $(1),$(UC_CAP_FEATURE_OUTPUTS)): $(SEQ_CACHE) $(TETRA_CSV) \
+		$(ROOT)/scripts/run_uc_cap_pipeline.py \
+		$(ROOT)/helpers/list_uc_cap_feature_outputs.py \
+		$(ROOT)/defaults.yaml \
+		$(ROOT)/experiments.yaml
+	cd "$(ROOT)" && $(PYTHON) scripts/run_uc_cap_pipeline.py --feat $(1)
+endef
+
+$(foreach i,$(UC_CAP_FEATURE_INDICES),$(eval $(call uc_cap_feature_rule,$(i))))
+
 fit_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
 	cd "$(ROOT)" && $(PYTHON) scripts/run_uc_cap_pipeline.py
 	cd "$(ROOT)" && $(PYTHON) scripts/fit_uc_cap_classifier.py --results-json
-
-grid_uc_cap: $(SEQ_CACHE) $(TETRA_CSV)
-	cd "$(ROOT)" && $(PYTHON) scripts/grid_uc_cap_pipeline.py
 
 TARGET ?=
 

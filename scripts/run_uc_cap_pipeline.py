@@ -12,6 +12,11 @@ CAP (cluster abundance profiles):
     per-run sequence count files under outputs/<cancer_type>/<study_name>/<Run>.csv(.xz).
 
 Input sequence features are tetramer count vectors (256 columns).
+
+Configuration is read from <repo>/defaults.yaml (run_uc_cap_pipeline baseline list,
+merged in order, then overlaid by experiments.yaml when --feat is set)
+and optional <repo>/experiments.yaml (--feat 1-based index into the flat list there,
+merged shallowly over the baseline). The only CLI flag is --feat.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -68,15 +73,13 @@ def parse_n_cap(raw: str) -> Union[int, str]:
     return value
 
 
-def _default_cache_parquet_from_config(repo_root: Path, config_path: Path) -> Path:
-    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+def _default_cache_parquet(repo_root: Path, defaults_cfg: Mapping[str, Any]) -> Path:
     try:
-        uc_cap_root_rel = str(cfg["paths"]["uc_cap_root"]).strip()
-        n_max = int(cfg["sequence_cache"]["n_max_per_run"])
+        paths_cfg = defaults_cfg["paths"]
+        uc_cap_root_rel = str(paths_cfg["uc_cap_root"]).strip()
+        n_max = int(defaults_cfg["sequence_cache"]["n_max_per_run"])
     except (TypeError, KeyError, ValueError) as exc:
-        raise SystemExit(
-            f"Invalid pipeline config for cache path defaults in {config_path}: {exc}"
-        ) from exc
+        raise SystemExit(f"Invalid pipeline config for cache path defaults: {exc}") from exc
     return repo_root / uc_cap_root_rel / f"sequence_counts_first_{n_max}_all_runs.parquet"
 
 
@@ -264,206 +267,187 @@ def summarize_cap_sparsity(
     return float(nnz.mean()), float(np.median(nnz)), int(nnz.min()), int(nnz.max())
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    root = Path(__file__).resolve().parent.parent
-    default_config_path = root / "defaults.yaml"
-    bootstrap = argparse.ArgumentParser(add_help=False)
-    bootstrap.add_argument("--config", type=Path, default=default_config_path)
-    bootstrap_args, _ = bootstrap.parse_known_args(list(argv) if argv is not None else None)
-    config_path = bootstrap_args.config
-    try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        paths_cfg = cfg["paths"]
-        uc_cfg = cfg["run_uc_cap_defaults"]
-        first_grid = cfg["uc_cap_pipeline_grid"][0]
-        default_outputs_dir = root / str(paths_cfg["outputs_dir"]).strip()
-        default_out_dir = root / str(paths_cfg["uc_cap_root"]).strip()
-        default_n_uc = int(first_grid["n_uc"])
-        default_n_cap = str(first_grid["n_cap"])
-        default_n_clusters = int(first_grid["n_clusters"])
-        default_random_state = int(uc_cfg["random_state"])
-        default_pca_variance = float(uc_cfg["pca_variance"])
-        default_pca_components = uc_cfg.get("pca_components")
-        if default_pca_components is not None:
-            default_pca_components = int(default_pca_components)
-        default_no_seq_normalize = not bool(uc_cfg["seq_normalize"])
-        default_seq_log1p = bool(uc_cfg["seq_log1p"])
-        default_cap_transform = str(uc_cfg["cap_transform"]).strip()
-        default_clr_pseudocount = float(uc_cfg["clr_pseudocount"])
-        default_batch_size = int(uc_cfg["batch_size"])
-        default_max_iter = int(uc_cfg["max_iter"])
-        default_chunk_size = int(uc_cfg["chunk_size"])
-    except (OSError, KeyError, TypeError, ValueError, IndexError) as exc:
-        raise SystemExit(f"Invalid pipeline defaults in {config_path}: {exc}") from exc
+def _n_cap_raw_to_str(raw: object) -> str:
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, int):
+        return str(raw)
+    raise SystemExit(f"n_cap must be an int or string, got {type(raw).__name__}")
 
+
+_FEAT_HELP = (
+    "Optional 1-based index into experiments.yaml run_uc_cap_pipeline (selects a CAP "
+    "feature-set row, merged over the defaults.yaml baseline). Omit to run the baseline only."
+)
+
+
+def _parse_feature_cli(argv: Optional[Sequence[str]]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=config_path,
-        help="Path to defaults.yaml (used to derive default cache parquet path).",
-    )
-    parser.add_argument(
-        "--cache-parquet",
-        type=Path,
-        default=None,
-        help="Cache Parquet with sequence-level tetramer counts (default: derived from defaults.yaml).",
-    )
-    parser.add_argument(
-        "--outputs-dir",
-        type=Path,
-        default=default_outputs_dir,
-        help="Root directory containing per-run sequence count files.",
-    )
-    parser.add_argument(
-        "--out-dir",
-        type=Path,
-        default=default_out_dir,
-        help="Directory to write UC/CAP artifacts.",
-    )
-    parser.add_argument(
-        "--n-uc",
-        type=int,
-        default=default_n_uc,
-        help="Sequences per run for UC fit (default: first uc_cap_pipeline_grid entry).",
-    )
-    parser.add_argument(
-        "--n-cap",
-        type=str,
-        default=default_n_cap,
-        help="Sequences per run for CAP assignment, or 'all' (default: first uc_cap_pipeline_grid entry).",
-    )
-    parser.add_argument(
-        "--n-clusters",
-        type=int,
-        default=default_n_clusters,
-        help="K for k-means (default: first uc_cap_pipeline_grid entry).",
-    )
-    parser.add_argument(
-        "--random-state",
-        type=int,
-        default=default_random_state,
-        help="Random seed (default: run_uc_cap_defaults.random_state).",
-    )
-    parser.add_argument(
-        "--pca-components",
-        type=int,
-        default=default_pca_components,
-        help="Optional fixed PCA component count before k-means (default: use --pca-variance).",
-    )
-    parser.add_argument(
-        "--pca-variance",
-        type=float,
-        default=default_pca_variance,
-        help="Cumulative explained-variance target for PCA when --pca-components is omitted.",
-    )
-    parser.add_argument(
-        "--no-seq-normalize",
-        action="store_true",
-        default=default_no_seq_normalize,
-        help="Disable per-sequence normalization to relative 4-mer frequencies.",
-    )
-    parser.add_argument(
-        "--seq-log1p",
-        action="store_true",
-        default=default_seq_log1p,
-        help="Apply log1p after optional per-sequence normalization.",
-    )
-    parser.add_argument(
-        "--cap-transform",
-        choices=("none", "clr"),
-        default=default_cap_transform,
-        help="Optional transform applied to run-level CAP vectors.",
-    )
-    parser.add_argument(
-        "--clr-pseudocount",
-        type=float,
-        default=default_clr_pseudocount,
-        help="Pseudocount used when --cap-transform=clr.",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=default_batch_size,
-        help="MiniBatchKMeans batch size.",
-    )
-    parser.add_argument(
-        "--max-iter",
-        type=int,
-        default=default_max_iter,
-        help="MiniBatchKMeans max iterations.",
-    )
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=default_chunk_size,
-        help="CSV chunk size when streaming n_cap=all.",
-    )
-    parser.add_argument(
-        "--refit-uc",
-        action="store_true",
-        help="Force refit of UC model and assignments if cached UC artifacts exist.",
-    )
-    return parser.parse_args(list(argv) if argv is not None else None)
+    parser.add_argument("--feat", type=int, default=None, help=_FEAT_HELP)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.feat is not None and args.feat <= 0:
+        raise SystemExit("--feat must be a positive integer (1-based index), or omit it.")
+    return int(args.feat) if args.feat is not None else 0
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = parse_args(argv)
-    repo_root = Path(__file__).resolve().parent.parent
-    args.cache_parquet = (
-        args.cache_parquet
-        if args.cache_parquet is not None
-        else _default_cache_parquet_from_config(repo_root, args.config)
-    )
+def _shallow_merge_uc_cap(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    out.update(overlay)
+    return out
+
+
+def merge_defaults_uc_cap_baseline_fragments(baseline_rows: List[Any]) -> Dict[str, Any]:
+    """Merge defaults.yaml run_uc_cap_pipeline (list of dicts) in order into one mapping."""
+    merged: Dict[str, Any] = {}
+    for i, frag in enumerate(baseline_rows):
+        if not isinstance(frag, dict):
+            raise SystemExit(
+                f"defaults.yaml run_uc_cap_pipeline[{i}] must be a mapping, got {type(frag).__name__}."
+            )
+        merged = {**merged, **frag}
+    return merged
+
+
+def load_merged_uc_cap_config(repo_root: Path, *, feat: int) -> Tuple[Dict[str, Any], int]:
+    """Return (merged pipeline dict, feature_index for logging). feat 0 = baseline only."""
+    defaults_path = repo_root / "defaults.yaml"
+    experiments_path = repo_root / "experiments.yaml"
     try:
-        n_cap = parse_n_cap(args.n_cap)
+        defaults_cfg = yaml.safe_load(defaults_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"Failed to read {defaults_path}: {exc}") from exc
+
+    try:
+        baseline_rows = defaults_cfg["run_uc_cap_pipeline"]
+    except (KeyError, TypeError) as exc:
+        raise SystemExit(f"defaults.yaml missing run_uc_cap_pipeline: {exc}") from exc
+    if not isinstance(baseline_rows, list) or not baseline_rows:
+        raise SystemExit(
+            "defaults.yaml run_uc_cap_pipeline must be a non-empty list of mappings."
+        )
+    base = merge_defaults_uc_cap_baseline_fragments(baseline_rows)
+
+    if feat == 0:
+        return base, 0
+
+    if not experiments_path.is_file():
+        raise SystemExit(f"--feat {feat} requires {experiments_path}")
+    try:
+        experiments_cfg = yaml.safe_load(experiments_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"Failed to read {experiments_path}: {exc}") from exc
+
+    grid = experiments_cfg.get("run_uc_cap_pipeline")
+    if not isinstance(grid, list) or not grid:
+        raise SystemExit(f"No run_uc_cap_pipeline list in {experiments_path}")
+    if feat > len(grid):
+        raise SystemExit(
+            f"--feat {feat} is out of range; experiments.yaml defines {len(grid)} feature-set rows."
+        )
+    row = grid[feat - 1]
+    if not isinstance(row, dict):
+        raise SystemExit(f"run_uc_cap_pipeline[{feat - 1}] must be a mapping.")
+    return _shallow_merge_uc_cap(base, row), feat
+
+
+def _uc_refit_error(uc_dir: Path, uc_assign_out: Path, model_out: Path, reason: str) -> None:
+    raise SystemExit(
+        f"{reason}\n"
+        "Delete the cached UC artifacts and re-run this script, for example:\n"
+        f"  rm -f {uc_assign_out} {model_out}\n"
+        f"(or remove the whole directory {uc_dir}/ if you prefer a clean slate.)"
+    )
+
+
+def run_pipeline_from_merged(
+    repo_root: Path,
+    *,
+    config_path: Path,
+    merged: Dict[str, Any],
+    feature_index: int,
+) -> int:
+    paths_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))["paths"]
+
+    def _resolve_cfg_path(raw: object) -> Path:
+        p = Path(str(raw).strip())
+        return p if p.is_absolute() else repo_root / p
+
+    try:
+        n_uc = int(merged["n_uc"])
+        n_clusters = int(merged["n_clusters"])
+        random_state = int(merged["random_state"])
+        pca_variance = float(merged["pca_variance"])
+        pca_components = merged.get("pca_components")
+        if pca_components is not None:
+            pca_components = int(pca_components)
+        seq_normalize = bool(merged["seq_normalize"])
+        seq_log1p = bool(merged["seq_log1p"])
+        cap_transform = str(merged["cap_transform"]).strip()
+        clr_pseudocount = float(merged["clr_pseudocount"])
+        batch_size = int(merged["batch_size"])
+        max_iter = int(merged["max_iter"])
+        chunk_size = int(merged["chunk_size"])
+        outputs_dir = _resolve_cfg_path(paths_cfg["outputs_dir"])
+        out_dir = _resolve_cfg_path(paths_cfg["uc_cap_root"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Invalid merged run_uc_cap_pipeline config: {exc}") from exc
+
+    if cap_transform not in ("none", "clr"):
+        raise SystemExit(f"cap_transform must be 'none' or 'clr', got {cap_transform!r}")
+
+    n_cap_raw = _n_cap_raw_to_str(merged["n_cap"])
+    try:
+        n_cap = parse_n_cap(n_cap_raw)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    if args.n_uc <= 0:
-        raise SystemExit("--n-uc must be positive.")
-    if args.n_clusters <= 1:
-        raise SystemExit("--n-clusters must be > 1.")
-    if args.pca_components is not None and args.pca_components <= 0:
-        raise SystemExit("--pca-components must be positive when provided.")
-    if not (0.0 < args.pca_variance <= 1.0):
-        raise SystemExit("--pca-variance must be in (0, 1].")
-    if args.clr_pseudocount <= 0:
-        raise SystemExit("--clr-pseudocount must be positive.")
-    if args.batch_size <= 0 or args.max_iter <= 0 or args.chunk_size <= 0:
-        raise SystemExit("--batch-size, --max-iter, and --chunk-size must be positive.")
-    if not args.cache_parquet.is_file():
-        raise SystemExit(f"Cache parquet not found: {args.cache_parquet}")
+    if n_uc <= 0:
+        raise SystemExit("n_uc must be positive.")
+    if n_clusters <= 1:
+        raise SystemExit("n_clusters must be > 1.")
+    if pca_components is not None and pca_components <= 0:
+        raise SystemExit("pca_components must be positive when provided.")
+    if not (0.0 < pca_variance <= 1.0):
+        raise SystemExit("pca_variance must be in (0, 1].")
+    if clr_pseudocount <= 0:
+        raise SystemExit("clr_pseudocount must be positive.")
+    if batch_size <= 0 or max_iter <= 0 or chunk_size <= 0:
+        raise SystemExit("batch_size, max_iter, and chunk_size must be positive.")
+
+    defaults_cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    cache_parquet = _default_cache_parquet(repo_root, defaults_cfg)
+    if not cache_parquet.is_file():
+        raise SystemExit(f"Cache parquet not found: {cache_parquet}")
+
+    prefix = f"F{feature_index} " if feature_index > 0 else ""
+    print(f"{prefix}n_uc={n_uc} n_clusters={n_clusters} n_cap={n_cap_raw}", flush=True)
 
     start = time.perf_counter()
-    transform = SequenceTransform(
-        normalize=not args.no_seq_normalize,
-        log1p=args.seq_log1p,
-    )
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    transform = SequenceTransform(normalize=seq_normalize, log1p=seq_log1p)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    n_needed_from_cache = max(args.n_uc, n_cap if isinstance(n_cap, int) else args.n_uc)
+    n_needed_from_cache = max(n_uc, n_cap if isinstance(n_cap, int) else n_uc)
     print(
         f"Loading cache rows with sequence_index <= {n_needed_from_cache}",
         flush=True,
     )
-    cache_df = load_cache_subset(args.cache_parquet, n_needed_from_cache)
+    cache_df = load_cache_subset(cache_parquet, n_needed_from_cache)
     if cache_df.empty:
         raise SystemExit("No sequence rows found in cache for requested settings.")
     if len(cache_df.columns) != 259:
         raise SystemExit("Cache schema mismatch: expected 259 columns.")
-    metadata = build_run_metadata(config_path=args.config).loc[
+    metadata = build_run_metadata(config_path=config_path).loc[
         :, ["cancer_type", "study_name", "Run", "sample_label"]
     ]
     metadata = metadata.drop_duplicates(subset=["study_name", "Run"])
-    run_split_map = load_run_split_map(config_path=args.config)
+    run_split_map = load_run_split_map(config_path=config_path)
     train_runs = {run for run, split in run_split_map.items() if split == "train"}
 
-    uc_dir = args.out_dir / f"uc{args.n_uc}_k{args.n_clusters}"
+    uc_dir = out_dir / f"uc{n_uc}_k{n_clusters}"
     uc_dir.mkdir(parents=True, exist_ok=True)
     uc_assign_out = uc_dir / "uc_assignments.csv"
     model_out = uc_dir / "uc_model.pkl"
-    reuse_uc = (not args.refit_uc) and uc_assign_out.is_file() and model_out.is_file()
+    reuse_uc = uc_assign_out.is_file() and model_out.is_file()
 
     if reuse_uc:
         print("Reusing existing UC model and assignments", flush=True)
@@ -471,35 +455,47 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             model_payload = pickle.load(f)
         km = model_payload["kmeans"]
         pca = model_payload["pca"]
+        if int(km.n_clusters) != n_clusters:
+            _uc_refit_error(
+                uc_dir,
+                uc_assign_out,
+                model_out,
+                f"Saved UC model has n_clusters={km.n_clusters} but config requests "
+                f"n_clusters={n_clusters}.",
+            )
         saved_train_runs = model_payload.get("split_train_runs")
         if saved_train_runs is None:
-            raise SystemExit(
-                "Existing UC model was fit without shared train-only runs. "
-                "Use --refit-uc to rebuild."
+            _uc_refit_error(
+                uc_dir,
+                uc_assign_out,
+                model_out,
+                "Existing UC model was fit without shared train-only runs metadata.",
             )
         if set(saved_train_runs) != train_runs:
-            raise SystemExit(
-                "Existing UC model train split does not match current shared split. "
-                "Use --refit-uc to rebuild."
+            _uc_refit_error(
+                uc_dir,
+                uc_assign_out,
+                model_out,
+                "Existing UC model train split does not match the current shared split.",
             )
         saved_transform = model_payload.get("transform", {})
         if (
             saved_transform.get("normalize") != transform.normalize
             or saved_transform.get("log1p") != transform.log1p
         ):
-            raise SystemExit(
-                "Existing UC model transform settings do not match current sequence "
-                "transform flags. Use --refit-uc to rebuild."
+            _uc_refit_error(
+                uc_dir,
+                uc_assign_out,
+                model_out,
+                "Existing UC model sequence transform settings do not match config.",
             )
         uc_df = pd.read_csv(uc_assign_out)
     else:
         uc_df = cache_df[
-            (cache_df["sequence_index"] <= args.n_uc) & (cache_df["Run"].isin(train_runs))
+            (cache_df["sequence_index"] <= n_uc) & (cache_df["Run"].isin(train_runs))
         ]
         if uc_df.empty:
-            raise SystemExit(
-                f"No UC rows found for training runs with --n-uc={args.n_uc}"
-            )
+            raise SystemExit(f"No UC rows found for training runs with n_uc={n_uc}")
         print(
             f"UC fit set (train runs only): {len(uc_df)} sequences, "
             f"{uc_df[['study_name', 'Run']].drop_duplicates().shape[0]} runs",
@@ -507,13 +503,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         km, pca, uc_labels = fit_uc_model(
             uc_df,
-            n_clusters=args.n_clusters,
-            random_state=args.random_state,
+            n_clusters=n_clusters,
+            random_state=random_state,
             transform=transform,
-            pca_components=args.pca_components,
-            pca_variance=args.pca_variance,
-            batch_size=args.batch_size,
-            max_iter=args.max_iter,
+            pca_components=pca_components,
+            pca_variance=pca_variance,
+            batch_size=batch_size,
+            max_iter=max_iter,
         )
         uc_df = uc_df.loc[:, ["study_name", "Run", "sequence_index"]].copy()
         uc_df["cluster_id"] = uc_labels
@@ -545,23 +541,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             transform=transform,
             pca=pca,
             km=km,
-            n_clusters=args.n_clusters,
+            n_clusters=n_clusters,
         )
     else:
         run_cluster_counts = stream_cap_all_sequences(
-            outputs_dir=args.outputs_dir,
+            outputs_dir=outputs_dir,
             transform=transform,
             pca=pca,
             km=km,
-            n_clusters=args.n_clusters,
-            chunk_size=args.chunk_size,
+            n_clusters=n_clusters,
+            chunk_size=chunk_size,
         )
 
     cap_df = make_cap_dataframe(
         run_cluster_counts,
-        n_clusters=args.n_clusters,
-        cap_transform=args.cap_transform,
-        clr_pseudocount=args.clr_pseudocount,
+        n_clusters=n_clusters,
+        cap_transform=cap_transform,
+        clr_pseudocount=clr_pseudocount,
     )
     cap_df = cap_df.merge(metadata, on=["study_name", "Run"], how="left")
     cap_df["split"] = cap_df["Run"].map(run_split_map).fillna("unsplit")
@@ -574,44 +570,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     run_tag = "all" if n_cap == "all" else str(n_cap)
     cap_name = (
-        f"cap{run_tag}"
-        if args.cap_transform == "none"
-        else f"cap{run_tag}_{args.cap_transform}"
+        f"cap{run_tag}" if cap_transform == "none" else f"cap{run_tag}_{cap_transform}"
     )
     cap_out = uc_dir / f"{cap_name}.csv"
     config_out = uc_dir / f"{cap_name}.json"
 
     cap_df.to_csv(cap_out, index=False)
     split_counts = cap_df["split"].value_counts().to_dict()
-    paths_cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))["paths"]
-
-    def _resolve_cfg_path(raw: object) -> Path:
-        p = Path(str(raw).strip())
-        return p if p.is_absolute() else repo_root / p
 
     datasets_csv_abs = _resolve_cfg_path(paths_cfg["datasets_csv"])
     data_dir_abs = _resolve_cfg_path(paths_cfg["data_dir"])
     with open(config_out, "w", encoding="utf-8") as f:
         json.dump(
             {
-                "cache_parquet": str(args.cache_parquet),
-                "outputs_dir": str(args.outputs_dir),
+                "cache_parquet": str(cache_parquet),
+                "outputs_dir": str(outputs_dir),
                 "datasets_csv": str(datasets_csv_abs),
                 "data_dir": str(data_dir_abs),
-                "n_uc": args.n_uc,
+                "n_uc": n_uc,
                 "n_cap": n_cap,
-                "n_clusters": args.n_clusters,
-                "random_state": args.random_state,
-                "pca_components": args.pca_components,
-                "pca_variance": args.pca_variance,
+                "n_clusters": n_clusters,
+                "random_state": random_state,
+                "pca_components": pca_components,
+                "pca_variance": pca_variance,
                 "pca_components_used": pca_components_used,
                 "seq_normalize": transform.normalize,
                 "seq_log1p": transform.log1p,
-                "cap_transform": args.cap_transform,
-                "clr_pseudocount": args.clr_pseudocount,
-                "batch_size": args.batch_size,
-                "max_iter": args.max_iter,
-                "chunk_size": args.chunk_size,
+                "cap_transform": cap_transform,
+                "clr_pseudocount": clr_pseudocount,
+                "batch_size": batch_size,
+                "max_iter": max_iter,
+                "chunk_size": chunk_size,
                 "cap_output_csv": str(cap_out),
                 "uc_assignments_csv": str(uc_assign_out),
                 "uc_model_pkl": str(model_out),
@@ -624,6 +613,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "cap_nonzero_clusters_median": cap_nnz_median,
                 "cap_nonzero_clusters_min": cap_nnz_min,
                 "cap_nonzero_clusters_max": cap_nnz_max,
+                "feature_index": feature_index,
             },
             f,
             indent=2,
@@ -631,7 +621,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     elapsed = time.perf_counter() - start
     print(
-        f"UC clusters used: {uc_unique_clusters}/{args.n_clusters}",
+        f"UC clusters used: {uc_unique_clusters}/{n_clusters}",
         flush=True,
     )
     print(
@@ -642,6 +632,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Output directory: {uc_dir}")
     print(f"Elapsed: {elapsed:.2f}s")
     return 0
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    repo_root = Path(__file__).resolve().parent.parent
+    config_path = repo_root / "defaults.yaml"
+    feat = _parse_feature_cli(argv)
+    merged, feature_index = load_merged_uc_cap_config(repo_root, feat=feat)
+    if feature_index == 0:
+        print("Baseline config (defaults.yaml only)", flush=True)
+    return run_pipeline_from_merged(
+        repo_root,
+        config_path=config_path,
+        merged=merged,
+        feature_index=feature_index,
+    )
 
 
 if __name__ == "__main__":
