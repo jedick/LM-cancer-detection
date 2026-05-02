@@ -6,7 +6,7 @@ numpy>=1.24.0
 numba>=0.59.0
 lzma-mt>=0.1.4
 
-# scripts/fit_tetramer_classifier.py
+# scripts/fit_classifier.py
 #scikit-learn>=1.3.0
 # Pin version to avoid InconsistentVersionWarning: Trying to unpickle estimator ...
 # https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations

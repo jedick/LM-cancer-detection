@@ -2,7 +2,8 @@
 name: manuscript-classifier-table1
 description: >-
   Regenerates Table 1 in manuscript/report.md from tetramer classifier JSON
-  metrics under results/tetramer/. Runs helpers/table1_from_classifier.py and
+  metrics (default `results/tetramer/`, i.e. `experiments.yaml` template with
+  `features=tetramer`). Runs helpers/table1_from_classifier.py and
   replaces the table between HTML comment markers. Use when tetramer JSON
   results change, when updating the Results table, or when the user asks to
   refresh Table 1.
@@ -17,7 +18,7 @@ Keep **Table 1** in `manuscript/report.md` in sync with **six JSON files** under
 - `cancer_diagnosis_{baseline,knn,random_forest}.json`
 - `cancer_type_{baseline,knn,random_forest}.json`
 
-(produced by `make fit_tetramer` / `scripts/fit_tetramer_classifier.py` via `experiments.yaml`).
+(produced by `make fit_tetramer` / `scripts/fit_classifier.py --tetramer` via `experiments.yaml`).
 
 ## Steps
 

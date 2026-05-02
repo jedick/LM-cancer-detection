@@ -1,5 +1,5 @@
-fit_tetramer_classifier:
-  results_json_template: results/tetramer/{name}.json
+fit_classifier:
+  results_json_template: results/{features}/{name}.json
   experiments:
     - name: cancer_diagnosis_baseline
       overrides:

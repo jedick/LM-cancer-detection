@@ -11,7 +11,7 @@ paths:
   # Ephemeral / local experiment outputs (gitignored); finalized copies go under results/
   results_scratch_dir: results/scratch
   datasets_csv: datasets.csv
-  # Run-level tetramer frequency table (input for fit_tetramer_classifier.py).
+  # Run-level tetramer frequency table (input for scripts/fit_classifier.py --tetramer).
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
   # CAP CSV layout from run_uc_cap_pipeline.py
@@ -21,12 +21,13 @@ paths:
 shared_splits:
   random_state: 0
 
-# Run-level tetramer pipeline defaults. fit_tetramer_classifier.py takes only --expt; it reads
-# this section and applies per-experiment overrides from experiments.yaml.
-fit_tetramer_classifier:
+# Classifier training defaults (scripts/fit_classifier.py).
+# Optional --expt overlays fit_classifier.exeriments config (from experiments.yaml).
+# Optional --feat (UC/CAP only) selects run_uc_cap_pipeline rows merged over this baseline.
+fit_classifier:
   # Target label column; null = auto-detect sample_labels / sample_label.
   label_column: null
-  # Classifier family: knn, random_forest, logistic_regression, or baseline (majority class).
+  # Classifier family: baseline, knn, random_forest, logistic_regression, svm.
   model: knn
   # Binary task: cancer_diagnosis or cancer_type.
   task: cancer_diagnosis
@@ -56,6 +57,12 @@ fit_tetramer_classifier:
   lr_solver_grid: "lbfgs,liblinear"
   # Comma-separated logistic regression class_weight grid (use 'none' for default).
   lr_class_weight_grid: "none,balanced"
+  # Comma-separated SVM RBF/linear/etc. C grid (shared for tetramer and UC/CAP).
+  svm_c_grid: "0.1,1.0,10.0"
+  # Comma-separated SVM gamma grid (sklearn string tokens scale/auto or floats).
+  svm_gamma_grid: "scale,auto"
+  # Comma-separated SVM kernel grid.
+  svm_kernel_grid: "rbf"
   # Validation metric to maximize during hyperparameter tuning.
   val_scoring: f1_weighted
   # Optional output path for metrics JSON; null disables JSON output (experiments may set via template).
@@ -94,10 +101,4 @@ run_uc_cap_pipeline:
     max_iter: 200
     # CSV row chunk size when n_cap is all (streaming from per-run count files).
     chunk_size: 20000
-
-# UC/CAP supervised models (fit_uc_cap_classifier.py, grid_uc_cap_classifier.py)
-uc_cap_classifiers:
-  - random_forest
-  - logistic_regression
-  - svm
 

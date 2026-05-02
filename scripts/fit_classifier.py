@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-Train a classifier on run-level tetramer frequency profiles.
+Train a classifier on run-level tetramer frequencies or UC/CAP cluster features.
 
-The workflow is:
-  1. Read the tetramer frequency table produced by calculate_tetramer_frequencies.py.
-  2. Ask shared_splits.py for the canonical Run -> split assignment.
-  3. Apply one binary task: cancer diagnosis or cancer type.
-  4. Tune hyperparameters on the validation split, then report test and holdout ROC AUC.
+Modes (mutually exclusive):
+  --tetramer   Inputs: paths.tetramer_frequencies_csv (256 ACGT tetramer columns).
+  --uc_cap     Inputs: CAP CSV from run_uc_cap_pipeline (cluster_* columns).
 
-Feature preprocessing is optional CLR, optional StandardScaler, and PCA for KNN and
-logistic regression. PCA candidates are chosen from the training split only so the
-validation, test, and holdout rows do not influence dimensionality selection.
+Both modes use scripts/shared_splits.py for train/val/test/holdout, support the same
+model families and hyperparameter grids from defaults.yaml (section fit_classifier), and
+optional experiment overlays from experiments.yaml (fit_classifier.experiments).
+
+UC/CAP mode:
+  --feat N   1-based index into experiments.yaml run_uc_cap_pipeline (merged over the
+             defaults.yaml baseline). Omit --feat to use the baseline-only merged config.
 """
 
 from __future__ import annotations
@@ -23,12 +25,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
 import pandas as pd
 import yaml
-from shared_splits import HOLDOUT, TEST, TRAIN, VAL, add_split_column
+from shared_splits import HOLDOUT, TEST, TRAIN, VAL, add_split_column, load_run_split_map
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
@@ -38,19 +40,19 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
 
 # ----- Constants -----
 
-# Lexicographic ACGT tetramers (256 columns), matching calculate_tetramer_frequencies.py.
 TETRAMERS: Tuple[str, ...] = tuple(
     "".join(p) for p in itertools.product("ACGT", repeat=4)
 )
-
-# Halving grid anchored at 256 (capped to train-feasible max components).
 _PCA_POW2_GRID: Tuple[int, ...] = (256, 128, 64, 32, 16, 8, 4, 2, 1)
 CANCER_LABELS: Tuple[str, str] = ("breast_cancer", "colorectal_cancer")
 T = TypeVar("T")
+
+MODEL_CHOICES = ("baseline", "knn", "random_forest", "logistic_regression", "svm")
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,9 @@ class ModelGrids:
     lr_c: List[float]
     lr_solver: List[str]
     lr_class_weight: List[Optional[str]]
+    svm_c: List[float]
+    svm_gamma: List[Union[float, str]]
+    svm_kernel: List[str]
 
 
 @dataclass(frozen=True)
@@ -93,24 +98,117 @@ class EvaluationResult:
     holdout_auc: float
 
 
+# ----- UC/CAP path resolution (aligned with helpers/list_uc_cap_feature_outputs.py) -----
+
+
+def _merge_uc_cap_row(
+    defaults_cfg: Mapping[str, Any],
+    experiments_cfg: Mapping[str, Any],
+    *,
+    feat: Optional[int],
+) -> Dict[str, Any]:
+    """feat None = defaults run_uc_cap_pipeline list only; feat >= 1 adds experiments row."""
+    baseline = defaults_cfg.get("run_uc_cap_pipeline")
+    if not isinstance(baseline, list):
+        raise SystemExit("defaults.yaml run_uc_cap_pipeline must be a list")
+    merged: Dict[str, Any] = {}
+    for frag in baseline:
+        if not isinstance(frag, dict):
+            raise SystemExit("defaults.yaml run_uc_cap_pipeline entries must be mappings")
+        merged = {**merged, **frag}
+    if feat is None:
+        return merged
+    if feat < 1:
+        raise SystemExit("--feat must be >= 1 when provided.")
+    rows = experiments_cfg.get("run_uc_cap_pipeline") or []
+    if not isinstance(rows, list):
+        raise SystemExit("experiments.yaml run_uc_cap_pipeline must be a list")
+    if feat > len(rows):
+        raise SystemExit(
+            f"--feat {feat} is out of range. experiments.yaml defines {len(rows)} UC/CAP rows."
+        )
+    row = rows[feat - 1]
+    if not isinstance(row, dict):
+        raise SystemExit("experiments.yaml run_uc_cap_pipeline entries must be mappings")
+    return {**merged, **row}
+
+
+def _cap_csv_path(repo_root: Path, paths_cfg: Mapping[str, Any], merged: Dict[str, Any]) -> Path:
+    uc_root = str(paths_cfg["uc_cap_root"]).strip()
+    n_uc = int(merged["n_uc"])
+    n_clusters = int(merged["n_clusters"])
+    n_cap = merged["n_cap"]
+    tag = (
+        "all"
+        if isinstance(n_cap, str) and str(n_cap).strip().lower() == "all"
+        else str(int(n_cap))
+    )
+    cap_transform = str(merged["cap_transform"]).strip()
+    stem = f"cap{tag}" if cap_transform == "none" else f"cap{tag}_{cap_transform}"
+    return repo_root / uc_root / f"uc{n_uc}_k{n_clusters}" / f"{stem}.csv"
+
+
+def _load_cap_csv(csv_path: Path) -> pd.DataFrame:
+    if not csv_path.is_file():
+        raise SystemExit(f"CSV not found: {csv_path}")
+    df = pd.read_csv(csv_path)
+    if df.empty:
+        raise SystemExit("Input CSV has no data rows.")
+    required = {"Run", "sample_label"}
+    missing = sorted(required - set(df.columns))
+    if missing:
+        raise SystemExit(f"CSV missing required columns: {missing}")
+    feature_cols = [c for c in df.columns if c.startswith("cluster_")]
+    if not feature_cols:
+        raise SystemExit("CSV has no cluster feature columns (expected prefix 'cluster_').")
+    if df["Run"].isna().any():
+        raise SystemExit("Found empty Run values in CSV.")
+    if df["sample_label"].isna().any():
+        raise SystemExit("Found empty sample_label values in CSV.")
+    return df
+
+
+def _validate_csv_splits(df: pd.DataFrame, expected: Dict[str, str]) -> None:
+    if "split" not in df.columns:
+        return
+    run_split_unique = df.loc[:, ["Run", "split"]].drop_duplicates()
+    split_counts = run_split_unique.groupby("Run")["split"].nunique()
+    bad = split_counts[split_counts > 1].index.tolist()
+    if bad:
+        raise SystemExit(
+            "A run has multiple split values in CSV. " f"Example runs: {bad[:5]}"
+        )
+    mismatches = []
+    for _, row in run_split_unique.iterrows():
+        run = str(row["Run"])
+        observed = str(row["split"]).strip()
+        expected_split = expected.get(run)
+        if expected_split is None:
+            mismatches.append((run, observed, "missing_in_expected"))
+            continue
+        if observed != expected_split:
+            mismatches.append((run, observed, expected_split))
+    if mismatches:
+        msg = ", ".join(
+            [f"{run}: csv={obs}, expected={exp}" for run, obs, exp in mismatches[:10]]
+        )
+        raise SystemExit(
+            "CSV split column does not match shared_splits.py-derived splits. "
+            f"First mismatches: {msg}"
+        )
+
+
 # ----- Config loading -----
 
-_EXPT_HELP = (
-    "Optional 1-based experiment index from experiments.yaml. "
-    "If omitted, use defaults.yaml fit_tetramer_classifier only."
-)
 
-
-def parse_experiment_arg(argv: Optional[Sequence[str]]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expt", type=int, default=None, help=_EXPT_HELP)
-    args = parser.parse_args(list(argv) if argv is not None else None)
-    if args.expt is not None and args.expt <= 0:
-        raise SystemExit("--expt must be a positive integer (1-based index).")
-    return int(args.expt) if args.expt is not None else 0
-
-
-def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
+def _load_experiment_args(
+    root: Path,
+    *,
+    expt: int,
+    features: str,
+    feat: Optional[int],
+    results_json_cli: Optional[str],
+) -> SimpleNamespace:
     defaults_path = root / "defaults.yaml"
     experiments_path = root / "experiments.yaml"
     try:
@@ -124,9 +222,9 @@ def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
         raise SystemExit(f"Failed to read config file: {exc}") from exc
 
     try:
-        defaults = dict(defaults_cfg["fit_tetramer_classifier"])
+        defaults = dict(defaults_cfg["fit_classifier"])
         paths_cfg = defaults_cfg["paths"]
-        experiments_section = experiments_cfg.get("fit_tetramer_classifier", {})
+        experiments_section = experiments_cfg.get("fit_classifier", {})
         experiments = experiments_section.get("experiments", [])
         results_json_template = experiments_section.get("results_json_template")
     except (TypeError, KeyError) as exc:
@@ -137,7 +235,7 @@ def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
 
     experiment_name = None
     if expt == 0:
-        selected = {}
+        selected: Dict[str, Any] = {}
     else:
         if not experiments:
             raise SystemExit(f"No experiments found in {experiments_path}")
@@ -149,31 +247,42 @@ def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
         experiment_name = selected.get("name")
 
     if not isinstance(selected, dict):
-        raise SystemExit(
-            "Selected experiment entry must be a mapping."
-        )
+        raise SystemExit("Selected experiment entry must be a mapping.")
     overrides = selected.get("overrides", {})
     if overrides is None:
         overrides = {}
     if not isinstance(overrides, dict):
-        raise SystemExit(f"Experiment {expt} tetramer overrides must be a mapping.")
+        raise SystemExit(f"Experiment {expt} overrides must be a mapping.")
 
     config = {**defaults, **overrides}
     if expt != 0 and config.get("results_json") is None and results_json_template is not None:
         if not isinstance(results_json_template, str) or not results_json_template.strip():
             raise SystemExit(
-                "fit_tetramer_classifier_results_json_template must be a non-empty string."
+                "experiments.yaml results_json_template must be a non-empty string."
             )
         if not isinstance(experiment_name, str) or not experiment_name.strip():
             raise SystemExit(
-                "Each experiment must define a non-empty 'name' when using "
-                "fit_tetramer_classifier_results_json_template."
+                "Each experiment must define a non-empty 'name' when using results_json_template."
             )
         config["results_json"] = results_json_template.format(
-            name=experiment_name.strip()
+            name=experiment_name.strip(),
+            features=features,
         )
-    args_dict = {
-        "csv": root / str(paths_cfg["tetramer_frequencies_csv"]).strip(),
+
+    results_json = config.get("results_json")
+    if results_json_cli is not None:
+        results_json = results_json_cli
+
+    if features == "tetramer":
+        csv_path = root / str(paths_cfg["tetramer_frequencies_csv"]).strip()
+    else:
+        merged_uc = _merge_uc_cap_row(defaults_cfg, experiments_cfg, feat=feat)
+        csv_path = _cap_csv_path(root, paths_cfg, merged_uc)
+
+    args_dict: Dict[str, Any] = {
+        "features": features,
+        "feat_index": feat,
+        "csv": csv_path,
         "label_column": config.get("label_column"),
         "model": str(config["model"]).strip(),
         "task": str(config["task"]).strip(),
@@ -191,7 +300,10 @@ def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
         "lr_c": str(config["lr_c_grid"]).strip(),
         "lr_solver": str(config["lr_solver_grid"]).strip(),
         "lr_class_weight": str(config["lr_class_weight_grid"]).strip(),
-        "results_json": config.get("results_json"),
+        "svm_c": str(config["svm_c_grid"]).strip(),
+        "svm_gamma": str(config["svm_gamma_grid"]).strip(),
+        "svm_kernel": str(config["svm_kernel_grid"]).strip(),
+        "results_json": results_json,
         "experiment_index": expt,
         "experiment_overrides": dict(overrides),
         "log_prefix": (f"E{expt}" if expt > 0 else ""),
@@ -201,15 +313,18 @@ def _load_experiment_args(root: Path, *, expt: int) -> argparse.Namespace:
 
 def _print_experiment_line(args: argparse.Namespace) -> None:
     expt = int(getattr(args, "experiment_index", 0))
-    overrides = dict(getattr(args, "experiment_overrides", {}))
     model = str(getattr(args, "model", ""))
     task = str(getattr(args, "task", ""))
     prefix = str(getattr(args, "log_prefix", ""))
+    features = str(getattr(args, "features", ""))
+    feat = getattr(args, "feat_index", None)
     if expt == 0:
         print("Default config", flush=True)
-        return
-    del overrides
-    print(_prefixed(prefix, f"Config - model: {model}, task: {task}"), flush=True)
+    else:
+        print(_prefixed(prefix, f"Config - model: {model}, task: {task}"), flush=True)
+    if features == "uc_cap":
+        fi = "baseline" if feat is None else str(feat)
+        print(_prefixed(prefix, f"UC/CAP feature set: {fi}"), flush=True)
 
 
 def _validate_basic_args(args: argparse.Namespace) -> None:
@@ -217,13 +332,12 @@ def _validate_basic_args(args: argparse.Namespace) -> None:
         raise SystemExit("--clr-pseudocount must be positive.")
     if not 0.0 < args.pca_min_variance <= 1.0:
         raise SystemExit("--pca-min-variance must be in (0, 1].")
+    if args.model not in MODEL_CHOICES:
+        raise SystemExit(f"Unknown model {args.model!r}. Expected one of {MODEL_CHOICES}.")
 
 
 def _prefixed(prefix: str, text: str) -> str:
     return f"{prefix} {text}" if prefix else text
-
-
-# ----- Comma-separated model-grid parsing -----
 
 
 def _split_arg_list(raw: str, description: str) -> List[str]:
@@ -273,6 +387,26 @@ def _parse_class_weight_grid(raw: str) -> List[Optional[str]]:
     return _parse_arg_grid(raw, convert, description="logistic regression class weights")
 
 
+def _parse_svm_gamma_grid(raw: str) -> List[Union[float, str]]:
+    out: List[Union[float, str]] = []
+    for value in _split_arg_list(raw, "SVM gamma"):
+        lv = value.lower()
+        if lv in ("scale", "auto"):
+            out.append(lv)
+        else:
+            out.append(float(value))
+    return out
+
+
+def _parse_svm_kernel_grid(raw: str) -> List[str]:
+    allowed = {"rbf", "linear", "poly", "sigmoid"}
+    kernels = _parse_str_grid(raw, "SVM kernel")
+    bad = [k for k in kernels if k not in allowed]
+    if bad:
+        raise SystemExit(f"Unsupported SVM kernel(s): {bad}. Allowed: {sorted(allowed)}.")
+    return kernels
+
+
 def _build_model_grids(args: argparse.Namespace) -> ModelGrids:
     return ModelGrids(
         n_neighbors=_parse_int_grid(args.n_neighbors, "KNN n_neighbors"),
@@ -286,6 +420,9 @@ def _build_model_grids(args: argparse.Namespace) -> ModelGrids:
         lr_c=_parse_float_grid(args.lr_c, "logistic regression C"),
         lr_solver=_parse_str_grid(args.lr_solver, "logistic regression solvers"),
         lr_class_weight=_parse_class_weight_grid(args.lr_class_weight),
+        svm_c=_parse_float_grid(args.svm_c, "SVM C"),
+        svm_gamma=_parse_svm_gamma_grid(args.svm_gamma),
+        svm_kernel=_parse_svm_kernel_grid(args.svm_kernel),
     )
 
 
@@ -304,23 +441,21 @@ def _resolve_label_column(fieldnames: Sequence[str], explicit: Optional[str]) ->
         return "sample_label"
     raise SystemExit(
         "No label column found. Expected 'sample_label' or 'sample_labels'; "
-        "use --label-column."
+        "use label_column in defaults.yaml."
     )
 
 
-def _load_feature_table(csv_path: Path, label_column_arg: Optional[str]) -> Tuple[pd.DataFrame, str]:
+def _load_tetramer_table(csv_path: Path, label_column_arg: Optional[str]) -> Tuple[pd.DataFrame, str]:
     df = pd.read_csv(csv_path)
     if df.empty:
         raise SystemExit("No data rows in CSV.")
     label_column = _resolve_label_column(df.columns, label_column_arg)
-
     required = {"Run", "study_name", label_column, *TETRAMERS}
     missing = sorted(required - set(df.columns))
     if missing:
         raise SystemExit(
             f"CSV is missing {len(missing)} required columns (first few: {missing[:5]!r})."
         )
-
     out = df.copy()
     for col in ["Run", "study_name", label_column]:
         out[col] = out[col].astype(str).str.strip()
@@ -329,10 +464,8 @@ def _load_feature_table(csv_path: Path, label_column_arg: Optional[str]) -> Tupl
     return out, label_column
 
 
-def _attach_shared_splits(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
-    # shared_splits computes assignments from the complete metadata table, then
-    # filters them to the Runs present here. This keeps subset callers stable.
-    return add_split_column(df, split_column="split")
+def _attach_shared_splits(df: pd.DataFrame, *, config_path: Path) -> pd.DataFrame:
+    return add_split_column(df, config_path=config_path, split_column="split")
 
 
 def _prepare_task_table(df: pd.DataFrame, label_column: str, task: str) -> pd.DataFrame:
@@ -350,18 +483,22 @@ def _prepare_task_table(df: pd.DataFrame, label_column: str, task: str) -> pd.Da
             raise SystemExit("Task cancer_type selected, but no cancer samples were found.")
         out["task_label"] = out[label_column].astype(str)
         return out
-    raise SystemExit(f"Unknown --task value: {task!r}")
+    raise SystemExit(f"Unknown task value: {task!r}")
 
 
-def _xy_from_frame(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+def _xy_tetramer(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     X = df.loc[:, list(TETRAMERS)].to_numpy(dtype=np.float64, copy=False)
     y = df["task_label"].to_numpy(dtype=object)
     return X, y
 
 
-def _build_task_splits(df: pd.DataFrame, label_column: str, task: str) -> TaskSplits:
-    # One split column carries the old partition and split concepts:
-    # train/val/test are development studies; holdout is external evaluation.
+def _xy_uc_cap(df: pd.DataFrame, feature_cols: Sequence[str]) -> Tuple[np.ndarray, np.ndarray]:
+    X = df.loc[:, list(feature_cols)].to_numpy(dtype=np.float64, copy=False)
+    y = df["task_label"].to_numpy(dtype=object)
+    return X, y
+
+
+def _build_task_splits_tetramer(df: pd.DataFrame, label_column: str, task: str) -> TaskSplits:
     task_df = _prepare_task_table(df, label_column, task)
     frames = {
         TRAIN: task_df[task_df["split"] == TRAIN],
@@ -372,11 +509,39 @@ def _build_task_splits(df: pd.DataFrame, label_column: str, task: str) -> TaskSp
     for split_name in (TRAIN, VAL, TEST):
         if frames[split_name].empty:
             raise SystemExit(f"No {split_name} rows found after task filtering.")
+    X_train, y_train = _xy_tetramer(frames[TRAIN])
+    X_val, y_val = _xy_tetramer(frames[VAL])
+    X_test, y_test = _xy_tetramer(frames[TEST])
+    X_holdout, y_holdout = _xy_tetramer(frames[HOLDOUT])
+    return TaskSplits(
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        X_test=X_test,
+        y_test=y_test,
+        X_holdout=X_holdout,
+        y_holdout=y_holdout,
+    )
 
-    X_train, y_train = _xy_from_frame(frames[TRAIN])
-    X_val, y_val = _xy_from_frame(frames[VAL])
-    X_test, y_test = _xy_from_frame(frames[TEST])
-    X_holdout, y_holdout = _xy_from_frame(frames[HOLDOUT])
+
+def _build_task_splits_uc_cap(
+    df: pd.DataFrame, label_column: str, task: str, feature_cols: Sequence[str]
+) -> TaskSplits:
+    task_df = _prepare_task_table(df, label_column, task)
+    frames = {
+        TRAIN: task_df[task_df["split"] == TRAIN],
+        VAL: task_df[task_df["split"] == VAL],
+        TEST: task_df[task_df["split"] == TEST],
+        HOLDOUT: task_df[task_df["split"] == HOLDOUT],
+    }
+    for split_name in (TRAIN, VAL, TEST):
+        if frames[split_name].empty:
+            raise SystemExit(f"No {split_name} rows found after task filtering.")
+    X_train, y_train = _xy_uc_cap(frames[TRAIN], feature_cols)
+    X_val, y_val = _xy_uc_cap(frames[VAL], feature_cols)
+    X_test, y_test = _xy_uc_cap(frames[TEST], feature_cols)
+    X_holdout, y_holdout = _xy_uc_cap(frames[HOLDOUT], feature_cols)
     return TaskSplits(
         X_train=X_train,
         y_train=y_train,
@@ -426,7 +591,6 @@ def _pre_pca_train_matrix(
     pseudocount: float,
     use_scaler: bool,
 ) -> np.ndarray:
-    """Match pipeline input to PCA for explained-variance grid (train fold only)."""
     z = X_train
     if use_clr:
         z = CLRTransformer(pseudocount=pseudocount).fit_transform(z)
@@ -445,12 +609,6 @@ def build_pca_n_components_grid(
     pca_random_state: int,
     n_feature_dims: int = 256,
 ) -> List[int]:
-    """
-    PCA component counts: ``min(256, n_train-1)`` (off), then powers of two downward.
-
-    The explained-variance check fits PCA on the training fold only, after the same
-    optional CLR and scaler steps used by the final sklearn pipeline.
-    """
     n_samples, n_feat = X_train.shape
     if n_samples < 2:
         raise SystemExit("Training set too small for PCA (need at least 2 samples).")
@@ -485,7 +643,7 @@ def build_pca_n_components_grid(
     candidates = [k for k in raw_ks if cumulative_var(k) >= min_explained_variance]
     if not candidates:
         raise SystemExit(
-            "No PCA component counts met --pca-min-variance on the training fold."
+            "No PCA component counts met pca_min_variance on the training fold."
         )
     return candidates
 
@@ -499,7 +657,6 @@ def make_pipeline(
     pca_n_components: Optional[int],
     pca_random_state: int,
 ) -> Pipeline:
-    """Optional CLR -> optional StandardScaler -> optional PCA -> classifier."""
     steps: List[Tuple[str, object]] = []
     if use_clr:
         steps.append(("clr", CLRTransformer(pseudocount=pseudocount)))
@@ -524,10 +681,17 @@ def make_pipeline(
         steps.append(
             ("clf", LogisticRegression(random_state=pca_random_state, max_iter=1000))
         )
+    elif model == "svm":
+        steps.append(
+            (
+                "clf",
+                SVC(random_state=pca_random_state),
+            )
+        )
     elif model == "baseline":
         steps.append(("clf", DummyClassifier(strategy="most_frequent")))
     else:
-        raise SystemExit(f"Unknown --model value: {model!r}")
+        raise SystemExit(f"Unknown model value: {model!r}")
     return Pipeline(steps)
 
 
@@ -652,6 +816,42 @@ def tune_logistic_regression_on_val(
     return TuningResult(best_params=best_params, validation_score=best_score)
 
 
+def tune_svm_on_val(
+    pipe: Pipeline,
+    splits: TaskSplits,
+    n_components_list: Sequence[int],
+    c_list: Sequence[float],
+    gamma_list: Sequence[Union[float, str]],
+    kernel_list: Sequence[str],
+    scoring: str,
+) -> TuningResult:
+    best_score = -1.0
+    best_params: Dict[str, object] = {}
+    for n_components, c_val, gamma, kernel in itertools.product(
+        n_components_list,
+        c_list,
+        gamma_list,
+        kernel_list,
+    ):
+        pipe.set_params(
+            pca__n_components=n_components,
+            clf__C=c_val,
+            clf__gamma=gamma,
+            clf__kernel=kernel,
+        )
+        pipe.fit(splits.X_train, splits.y_train)
+        score = _score_val(splits.y_val, pipe.predict(splits.X_val), scoring)
+        if score > best_score:
+            best_score = score
+            best_params = {
+                "n_components": n_components,
+                "C": c_val,
+                "gamma": gamma,
+                "kernel": kernel,
+            }
+    return TuningResult(best_params=best_params, validation_score=best_score)
+
+
 def _tune_model_on_validation(
     pipe: Pipeline,
     *,
@@ -725,58 +925,108 @@ def _tune_model_on_validation(
         )
         return result
 
-    print(
-        _prefixed(
-            prefix,
-            f"Grid - n_components: {list(n_components_grid)}, "
-            f"C: {grids.lr_c}, solver: {grids.lr_solver}, class_weight: {grids.lr_class_weight}",
-        ),
-        flush=True,
-    )
-    result = tune_logistic_regression_on_val(
-        pipe,
-        splits,
-        n_components_list=n_components_grid,
-        c_list=grids.lr_c,
-        solver_list=grids.lr_solver,
-        class_weight_list=grids.lr_class_weight,
-        scoring=args.scoring,
-    )
-    pipe.set_params(
-        pca__n_components=result.best_params["n_components"],
-        clf__C=result.best_params["C"],
-        clf__solver=result.best_params["solver"],
-        clf__class_weight=result.best_params["class_weight"],
-    )
-    return result
+    if args.model == "svm":
+        print(
+            _prefixed(
+                prefix,
+                f"Grid - n_components: {list(n_components_grid)}, "
+                f"C: {grids.svm_c}, gamma: {grids.svm_gamma}, kernel: {grids.svm_kernel}",
+            ),
+            flush=True,
+        )
+        result = tune_svm_on_val(
+            pipe,
+            splits,
+            n_components_list=n_components_grid,
+            c_list=grids.svm_c,
+            gamma_list=grids.svm_gamma,
+            kernel_list=grids.svm_kernel,
+            scoring=args.scoring,
+        )
+        pipe.set_params(
+            pca__n_components=result.best_params["n_components"],
+            clf__C=result.best_params["C"],
+            clf__gamma=result.best_params["gamma"],
+            clf__kernel=result.best_params["kernel"],
+        )
+        return result
+
+    if args.model == "logistic_regression":
+        print(
+            _prefixed(
+                prefix,
+                f"Grid - n_components: {list(n_components_grid)}, "
+                f"C: {grids.lr_c}, solver: {grids.lr_solver}, class_weight: {grids.lr_class_weight}",
+            ),
+            flush=True,
+        )
+        result = tune_logistic_regression_on_val(
+            pipe,
+            splits,
+            n_components_list=n_components_grid,
+            c_list=grids.lr_c,
+            solver_list=grids.lr_solver,
+            class_weight_list=grids.lr_class_weight,
+            scoring=args.scoring,
+        )
+        pipe.set_params(
+            pca__n_components=result.best_params["n_components"],
+            clf__C=result.best_params["C"],
+            clf__solver=result.best_params["solver"],
+            clf__class_weight=result.best_params["class_weight"],
+        )
+        return result
+
+    raise SystemExit(f"Unhandled model for tuning: {args.model!r}")
 
 
 # ----- Evaluation and reporting -----
 
 
-def test_binary_roc_auc(
-    y_true: np.ndarray,
-    y_proba: np.ndarray,
-    classes: np.ndarray,
-) -> float:
-    """Binary ROC AUC from class probabilities; NaN if undefined."""
-    classes = np.asarray(classes)
-    y_true = np.asarray(y_true)
-    if classes.size != 2 or np.unique(y_true).size < 2:
+def _binary_roc_auc_from_scores(y_true_obj: np.ndarray, y_score: np.ndarray) -> float:
+    """Binary ROC AUC from scores (higher = positive class); NaN if undefined."""
+    y_true_obj = np.asarray(y_true_obj)
+    y_score = np.asarray(y_score, dtype=np.float64).ravel()
+    classes = np.unique(y_true_obj)
+    if classes.size != 2 or np.unique(y_true_obj).size < 2:
         return float("nan")
     pos_label = classes[1]
-    y_score = y_proba[:, 1]
+    y_bin = y_true_obj == pos_label
     try:
-        auc = float(roc_auc_score(y_true == pos_label, y_score))
+        return float(roc_auc_score(y_bin, y_score))
     except ValueError:
         return float("nan")
-    return auc
+
+
+def _evaluation_scores(pipe: Pipeline, X: np.ndarray) -> np.ndarray:
+    clf = pipe.named_steps["clf"]
+    if hasattr(clf, "predict_proba"):
+        proba = pipe.predict_proba(X)
+        classes = clf.classes_
+        if classes.size != 2:
+            raise SystemExit("Binary classification expected.")
+        pos = list(classes).index(classes[1])
+        return proba[:, pos]
+    if hasattr(pipe, "decision_function"):
+        return np.asarray(pipe.decision_function(X), dtype=np.float64).ravel()
+    raise SystemExit("Classifier has neither predict_proba nor decision_function.")
+
+
+def _evaluate_model(pipe: Pipeline, splits: TaskSplits) -> EvaluationResult:
+    pipe.fit(splits.X_train, splits.y_train)
+    test_scores = _evaluation_scores(pipe, splits.X_test)
+    test_auc = _binary_roc_auc_from_scores(splits.y_test, test_scores)
+    holdout_auc = float("nan")
+    if len(splits.y_holdout) > 0:
+        hold_scores = _evaluation_scores(pipe, splits.X_holdout)
+        holdout_auc = _binary_roc_auc_from_scores(splits.y_holdout, hold_scores)
+    return EvaluationResult(test_auc=test_auc, holdout_auc=holdout_auc)
 
 
 def _label_counts(y: np.ndarray) -> Dict[str, int]:
     out: Dict[str, int] = {}
     for lab in y:
-        out[lab] = out.get(lab, 0) + 1
+        out[str(lab)] = out.get(str(lab), 0) + 1
     return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
 
@@ -811,24 +1061,6 @@ def _print_dataset_summary(splits: TaskSplits, *, prefix: str = "") -> None:
     )
 
 
-def _evaluate_model(pipe: Pipeline, splits: TaskSplits) -> EvaluationResult:
-    pipe.fit(splits.X_train, splits.y_train)
-    clf_classes = pipe.named_steps["clf"].classes_
-    test_auc = test_binary_roc_auc(
-        splits.y_test,
-        pipe.predict_proba(splits.X_test),
-        clf_classes,
-    )
-    holdout_auc = float("nan")
-    if len(splits.y_holdout) > 0:
-        holdout_auc = test_binary_roc_auc(
-            splits.y_holdout,
-            pipe.predict_proba(splits.X_holdout),
-            clf_classes,
-        )
-    return EvaluationResult(test_auc=test_auc, holdout_auc=holdout_auc)
-
-
 def _print_evaluation(model: str, result: EvaluationResult, *, prefix: str = "") -> None:
     del model
     test_value = f"{result.test_auc:.6f}" if np.isfinite(result.test_auc) else "nan"
@@ -839,7 +1071,6 @@ def _print_evaluation(model: str, result: EvaluationResult, *, prefix: str = "")
 
 
 def _float_for_json(x: float) -> Optional[float]:
-    """JSON-serializable float; None for NaN/inf."""
     if not math.isfinite(x):
         return None
     return float(x)
@@ -850,15 +1081,18 @@ def _format_hyperparameters(params: Dict[str, object]) -> str:
 
 
 def _results_json_out_path(
-    repo_root: Path, raw: Optional[str], *, task: str, model: str
+    repo_root: Path,
+    raw: Optional[str],
+    *,
+    features: str,
+    task: str,
+    model: str,
 ) -> Optional[Path]:
-    """None = skip; empty str = auto path under results/scratch/."""
     if raw is None:
         return None
     if raw == "":
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        stem = Path(__file__).stem
-        name = f"{stem}_{task}_{model}_{ts}.json"
+        name = f"{features}_{task}_{model}_{ts}.json"
         return repo_root / "results" / "scratch" / name
     return Path(raw).expanduser()
 
@@ -871,9 +1105,12 @@ def _write_results_json(
     n_components_grid: Sequence[int],
     tuning: TuningResult,
     evaluation: EvaluationResult,
+    n_features: int,
 ) -> None:
     config = {
-        "csv": str(args.csv.resolve()),
+        "features": getattr(args, "features", ""),
+        "feat_index": getattr(args, "feat_index", None),
+        "csv": str(Path(args.csv).resolve()),
         "label_column": label_column,
         "model": args.model,
         "task": args.task,
@@ -890,9 +1127,13 @@ def _write_results_json(
         "lr_c": args.lr_c,
         "lr_solver": args.lr_solver,
         "lr_class_weight": args.lr_class_weight,
+        "svm_c": args.svm_c,
+        "svm_gamma": args.svm_gamma,
+        "svm_kernel": args.svm_kernel,
         "scoring": args.scoring,
         "pca_n_components_candidates": [int(x) for x in n_components_grid],
         "best_hyperparameters": tuning.best_params,
+        "n_features": n_features,
     }
     payload = {
         "script": Path(__file__).name,
@@ -914,18 +1155,15 @@ def _write_results_json(
         handle.write("\n")
 
 
-# ----- Orchestration -----
-
-
 def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
     prefix = str(getattr(args, "log_prefix", ""))
     if args.model in ("random_forest", "baseline"):
-        # Tree and majority-class models skip PCA (no component search).
         print(_prefixed(prefix, "PCA - min_explained_variance: n/a, CLR: n/a"), flush=True)
         return []
 
     use_scaler = not args.no_scaler
     use_clr = not args.no_clr
+    n_feat_cap = min(256, int(splits.X_train.shape[1]))
     n_components_grid = build_pca_n_components_grid(
         splits.X_train,
         use_clr=use_clr,
@@ -933,6 +1171,7 @@ def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
         use_scaler=use_scaler,
         min_explained_variance=args.pca_min_variance,
         pca_random_state=args.random_state,
+        n_feature_dims=n_feat_cap,
     )
     print(
         _prefixed(
@@ -952,13 +1191,31 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
     results_json_path = _results_json_out_path(
         root,
         args.results_json,
+        features=str(args.features),
         task=args.task,
         model=args.model,
     )
+    config_path = root / "defaults.yaml"
 
-    feature_df, label_column = _load_feature_table(args.csv, args.label_column)
-    feature_df = _attach_shared_splits(feature_df, args)
-    splits = _build_task_splits(feature_df, label_column, args.task)
+    if args.features == "tetramer":
+        feature_df, label_column = _load_tetramer_table(args.csv, args.label_column)
+    else:
+        expected = load_run_split_map(config_path=config_path)
+        cap_df = _load_cap_csv(Path(args.csv))
+        _validate_csv_splits(cap_df, expected)
+        feature_df = cap_df
+        label_column = _resolve_label_column(feature_df.columns, args.label_column)
+
+    feature_df = _attach_shared_splits(feature_df, config_path=config_path)
+    if args.features == "tetramer":
+        splits = _build_task_splits_tetramer(feature_df, label_column, args.task)
+        n_features = len(TETRAMERS)
+    else:
+        task_df_preview = _prepare_task_table(feature_df, label_column, args.task)
+        feature_cols = [c for c in task_df_preview.columns if c.startswith("cluster_")]
+        splits = _build_task_splits_uc_cap(feature_df, label_column, args.task, feature_cols)
+        n_features = len(feature_cols)
+
     _require_binary_classes(splits.y_train, split_name="train split", task=args.task)
     _require_binary_classes(splits.y_val, split_name="validation split", task=args.task)
     _require_binary_classes(splits.y_test, split_name="test split", task=args.task)
@@ -999,14 +1256,73 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
             n_components_grid=n_components_grid,
             tuning=tuning,
             evaluation=evaluation,
+            n_features=n_features,
         )
     return 0
 
 
+def _parse_main_argv(argv: Optional[Sequence[str]]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mx = parser.add_mutually_exclusive_group(required=True)
+    mx.add_argument("--tetramer", action="store_true", help="Use tetramer frequency features.")
+    mx.add_argument("--uc_cap", action="store_true", help="Use UC/CAP cluster features.")
+    parser.add_argument(
+        "--expt",
+        type=int,
+        default=None,
+        help=(
+            "Optional 1-based experiment index from experiments.yaml fit_classifier. "
+            "If omitted, use defaults.yaml fit_classifier only."
+        ),
+    )
+    parser.add_argument(
+        "--feat",
+        type=int,
+        default=None,
+        help="UC/CAP only: 1-based feature-set index (experiments.yaml run_uc_cap_pipeline). "
+        "Omit for baseline-only merged config from defaults.yaml.",
+    )
+    parser.add_argument(
+        "--results-json",
+        type=str,
+        nargs="?",
+        const="",
+        default=argparse.SUPPRESS,
+        help=(
+            "Override results JSON path from config. With no path, writes under results/scratch/ "
+            "with an auto-generated name ({features}_{task}_{model}_{utc}.json). "
+            "Omit entirely to use defaults.yaml / experiments only."
+        ),
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.expt is not None and args.expt <= 0:
+        raise SystemExit(
+            "--expt must be a positive integer (1-based experiment index), or omit for defaults."
+        )
+    if args.tetramer and args.feat is not None:
+        raise SystemExit("--feat is only valid with --uc_cap.")
+    if args.uc_cap and args.feat is not None and args.feat < 1:
+        raise SystemExit("--feat must be >= 1 when provided.")
+    return args
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     root = Path(__file__).resolve().parent.parent
-    expt = parse_experiment_arg(argv)
-    args = _load_experiment_args(root, expt=expt)
+    cli = _parse_main_argv(argv)
+    expt = int(cli.expt) if cli.expt is not None else 0
+    features = "tetramer" if cli.tetramer else "uc_cap"
+    if hasattr(cli, "results_json"):
+        results_json_cli: Optional[str] = cli.results_json
+    else:
+        results_json_cli = None
+
+    args = _load_experiment_args(
+        root,
+        expt=expt,
+        features=features,
+        feat=cli.feat,
+        results_json_cli=results_json_cli,
+    )
     return run_classifier(args, root)
 
 

@@ -54,12 +54,12 @@ See the table for an overview of all the steps and read below for details.
 |-----|--------|--------|
 | 1. Download | download_sra_data.py | `make download_data` |
 | 2. Tetramer counts | calculate_tetramer_frequencies.py | `make tetramer_frequencies` |
-| 3. Tetramer classifier | fit_tetramer_classifier.py | `make fit_tetramer` |
+| 3. Tetramer classifier | fit_classifier.py (`--tetramer`) | `make fit_tetramer` |
 | 4. Sequence cache | build_uc_cap_sequence_cache.py | `make sequence_cache` |
 | 5. UC/CAP pipeline | run_uc_cap_pipeline.py | `make run_uc_cap` |
-| 6. UC/CAP classifier | fit_uc_cap_classifier.py | `make fit_uc_cap` |
+| 6. UC/CAP classifier | fit_classifier.py (`--uc_cap`) | `make fit_uc_cap` |
 
-For non-default settings, use Makefile variables (`EXPT=...` for tetramer classifier runs, `FEAT=...` for UC/CAP pipeline feature sets) or run scripts directly with their supported options.
+For non-default settings, use Makefile variables (`EXPT=...` for tetramer classifier runs, `FEAT=...` for UC/CAP pipeline feature sets and for `fit_uc_cap`) or run scripts directly with their supported options.
 
 If you want to see why Make would rebuild a target (including recursive prerequisite chains), use `make explain-<target>`.
 For example, run `make explain-run_uc_cap`; replace the part after `explain-` with any Make target name.
@@ -69,10 +69,10 @@ For example, run `make explain-run_uc_cap`; replace the part after `explain-` wi
 
 1. Download. Inputs: `data/**/*.csv`. Outputs: `fasta/<study>/<Run>.fasta.gz`.
 2. Tetramer counts. Inputs: `fasta/<study>/<Run>.fasta.gz`. Outputs: `outputs/tetramer_frequencies.csv`, `outputs/<cancer>/<study>/<Run>.csv.xz`.
-3. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: default run (`make fit_tetramer`) writes `results/scratch/fit_tetramer_classifier_*.json`; experiment runs (`make fit_tetramer EXPT=N`) write `results/tetramer/{name}.json`.
+3. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: default run (`make fit_tetramer`) writes `results/scratch/tetramer_*.json` when JSON is emitted; experiment runs (`make fit_tetramer EXPT=N`) write under `results/tetramer/` using `experiments.yaml` `results_json_template` (`results/{features}/{name}.json` with `features=tetramer`).
 4. Sequence cache. Inputs: `outputs/<cancer>/<study>/<Run>.csv.xz`. Outputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`.
 5. UC/CAP pipeline. Inputs: `defaults.yaml`, `experiments.yaml` (for `FEAT>=1` or `FEAT=0`), `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` (baseline from `defaults.yaml`; further feature-set rows from `experiments.yaml`).
-6. UC/CAP classifier. Inputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`, `outputs/tetramer_frequencies.csv`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv`, `results/scratch/fit_uc_cap_classifier_*.json`.
+6. UC/CAP classifier. Inputs: CAP CSVs under `outputs/uc_cap/`. Outputs: `results/scratch/uc_cap_*.json` when JSON is emitted (for example from `make fit_uc_cap` with optional `FEAT=...`).
 
 </details>
 
@@ -91,11 +91,11 @@ They hold 256 columns of **raw integer** 4-mer counts with no header row, one ro
 
 ### Run-level tetramer classifier
 
-`make fit_tetramer` fits run-level classifiers on `outputs/tetramer_frequencies.csv`, with CLR, scaling, and PCA.
-Default task/model and other settings are resolved from `defaults.yaml` with results written to `results/scratch/`.
-Add `EXPT=N` to use experiment name and overrides from `experiments.yaml` and write results to `results/tetramer/{name}.json`.
+`make fit_tetramer` runs `scripts/fit_classifier.py --tetramer` on `outputs/tetramer_frequencies.csv`, with CLR, scaling, and PCA.
+Default task/model and other settings are resolved from `defaults.yaml` (`fit_classifier`) with results written to `results/scratch/`.
+Add `EXPT=N` to use experiment name and overrides from `experiments.yaml` and write results to `results/{features}/{name}.json` (`features` is `tetramer` or `uc_cap` from `fit_classifier.py`).
 Hyperparameters are chosen on validation, then ROC AUC is reported for test and holdout.
-Supported models are `knn`, `random_forest`, `logistic_regression`, and `baseline` (majority class).
+Supported models are `baseline`, `knn`, `random_forest`, `logistic_regression`, and `svm`.
 
 Use `make fit_tetramer EXPT=1` to run a single experiment and `make fit_tetramer EXPT=0` to run all experiments.
 The `EXPT=0` Make targets support incremental rebuilds and `-j` for parallel execution (for example, `make -j4 fit_tetramer EXPT=0`).
@@ -106,9 +106,7 @@ This stage takes the sequence-level tetramer count files described above.
 
 - `make sequence_cache` builds a cached sequence-level tetramer table for UC/CAP exploration.
   It keeps the first 10000 rows (configured in `defaults.yaml`) from each run file and saves the result in a Parquet table under `outputs/uc_cap`.
-- `make run_uc_cap` generates feature sets for downstream classification.
-  It performs unsupervised clustering on a subset of cached rows (`n_uc`) and then assigns a larger subset of sequences (`n_cap`) to the learned cluster centroids, producing run-level cluster abundance profiles.
-  Its main output is `outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv`, where each row is a sequencing run and the `cluster_*` columns are normalized per-run abundances.
-  Parameters come from `defaults.yaml` with optional merging of a row defining a CAP feature set from `run_uc_cap_pipeline` in `experiments.yaml`.
-  Use `make run_uc_cap FEAT=1` to generate a single feature set and `make run_uc_cap FEAT=0` to build all pipeline feature sets incrementally.
-- `make fit_uc_cap` uses the features generated by the pipeline and the shared run splits to fit classification models.
+- `make run_uc_cap` builds the **baseline** CAP CSV under `outputs/uc_cap/` when inputs are newer (defaults-only merge from `defaults.yaml`); it is a normal file target, so repeated invocations are cheap when the CSV is already up to date.
+  With `FEAT=N` / `FEAT=0`, it drives the same pipeline for experiment-defined feature sets (see `experiments.yaml` `run_uc_cap_pipeline`).
+  Each CAP row is a sequencing run; `cluster_*` columns are normalized per-run abundances.
+- `make fit_uc_cap` runs `scripts/fit_classifier.py --uc_cap` on the baseline CAP CSV (no `FEAT`), or with `FEAT=N` / `FEAT=0` to classify one or every experiment-defined feature set (same indices as `make run_uc_cap`).

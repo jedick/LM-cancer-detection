@@ -9,7 +9,7 @@ alwaysApply: true
 
 - Treat **`defaults.yaml`** as the source of truth for pipeline paths and default parameters.
 - Prefer running pipeline steps via **`Makefile` targets** (`download_data`, `tetramer_frequencies`, `sequence_cache`, `fit_tetramer`, `fit_uc_cap`, `run_uc_cap`) instead of ad hoc script commands in docs and guidance.
-- **`EXPT`** selects tetramer classifier experiments (`fit_tetramer`); **`FEAT`** selects UC/CAP pipeline feature sets (`run_uc_cap`, future `fit_uc_cap`).
+- **`EXPT`** selects a row from **`experiments.yaml`** → **`fit_classifier.experiments`** (1-based index for `scripts/fit_classifier.py --expt`); the same experiment definition applies whether you use **`--tetramer`** or **`--uc_cap`**. **`FEAT`** selects UC/CAP pipeline feature sets (`run_uc_cap`) and which CAP CSV `fit_uc_cap` classifies when set.
 - Avoid hardcoding pipeline paths/defaults in multiple places; when a path/parameter changes in `defaults.yaml`, update Makefile wiring and README pipeline references in the same change.
 
 ## Sample identity and FASTA files

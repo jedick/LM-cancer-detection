@@ -3,7 +3,7 @@
 Build Table 1 from tetramer classifier JSON metrics under results/tetramer/.
 
 Expects six files named {task}_{model}.json (e.g. cancer_diagnosis_knn.json),
-as written by scripts/fit_tetramer_classifier.py: tasks cancer_diagnosis and
+as written by scripts/fit_classifier.py: tasks cancer_diagnosis and
 cancer_type; models baseline, knn, and random_forest.
 
 By default prints an HTML table with nested headers (task × test/holdout).
