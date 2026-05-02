@@ -9,7 +9,7 @@ alwaysApply: true
 
 - Treat **`defaults.yaml`** as the source of truth for pipeline paths and default parameters.
 - Prefer running pipeline steps via **`Makefile` targets** (`download_data`, `tetramer_frequencies`, `sequence_cache`, `fit_tetramer`, `fit_uc_cap`, `run_uc_cap`) instead of ad hoc script commands in docs and guidance.
-- **`EXPT`** selects a row from **`experiments.yaml`** → **`fit_classifier.experiments`** (1-based index for `scripts/fit_classifier.py --expt`); the same experiment definition applies whether you use **`--tetramer`** or **`--uc_cap`**. **`FEAT`** selects UC/CAP pipeline feature sets (`run_uc_cap`) and which CAP CSV `fit_uc_cap` classifies when set.
+- **`EXPT`** selects a row from **`experiments.yaml`** → **`fit_classifier.experiments`** (1-based index for `scripts/fit_classifier.py --expt`); the same experiment definition applies whether you use **`--tetramer`** or **`--uc_cap`**. **`FEAT`** selects UC/CAP pipeline feature sets (`run_uc_cap`) and which CAP CSV **`fit_uc_cap`** classifies when set. For **`make fit_uc_cap`**, combine **`FEAT`** and **`EXPT`** for Make-driven JSON under **`results/uc_cap/<feature_index>/`**: **`FEAT=0 EXPT=<n>`** (one experiment, all feature sets), **`FEAT=<n> EXPT=0`** (all experiments, one feature set; same JSON stems as **`make fit_tetramer EXPT=0`**), **`FEAT=0 EXPT=0`** (full grid). A bare **`FEAT=0`** or **`EXPT=0`** is invalid.
 - Avoid hardcoding pipeline paths/defaults in multiple places; when a path/parameter changes in `defaults.yaml`, update Makefile wiring and README pipeline references in the same change.
 
 ## Sample identity and FASTA files

@@ -48,7 +48,6 @@ from sklearn.svm import SVC
 TETRAMERS: Tuple[str, ...] = tuple(
     "".join(p) for p in itertools.product("ACGT", repeat=4)
 )
-_PCA_POW2_GRID: Tuple[int, ...] = (256, 128, 64, 32, 16, 8, 4, 2, 1)
 CANCER_LABELS: Tuple[str, str] = ("breast_cancer", "colorectal_cancer")
 T = TypeVar("T")
 
@@ -607,12 +606,17 @@ def build_pca_n_components_grid(
     use_scaler: bool,
     min_explained_variance: float,
     pca_random_state: int,
-    n_feature_dims: int = 256,
 ) -> List[int]:
+    """PCA component counts meeting ``min_explained_variance`` on the training fold.
+
+    ``max_comp`` is ``min(n_features, n_samples - 1)`` (standard PCA bound on the
+    training matrix). Candidates are distinct values in the floor-halving chain
+    ``max_comp, max_comp//2, ...`` down to ``1``.
+    """
     n_samples, n_feat = X_train.shape
     if n_samples < 2:
         raise SystemExit("Training set too small for PCA (need at least 2 samples).")
-    max_comp = int(min(n_feature_dims, n_feat, n_samples - 1))
+    max_comp = int(min(n_feat, n_samples - 1))
     if max_comp < 1:
         raise SystemExit("Cannot fit PCA: max components < 1.")
 
@@ -634,11 +638,14 @@ def build_pca_n_components_grid(
 
     raw_ks: List[int] = []
     seen: set[int] = set()
-    for p in _PCA_POW2_GRID:
-        k = min(p, max_comp)
+    k = int(max_comp)
+    while k >= 1:
         if k not in seen:
             seen.add(k)
             raw_ks.append(k)
+        if k == 1:
+            break
+        k //= 2
 
     candidates = [k for k in raw_ks if cumulative_var(k) >= min_explained_variance]
     if not candidates:
@@ -1080,6 +1087,26 @@ def _format_hyperparameters(params: Dict[str, object]) -> str:
     return ", ".join(f"{k}: {v}" for k, v in params.items())
 
 
+def _jsonify_for_results(obj: object) -> object:
+    """Recursively convert values to JSON-serializable types (e.g. numpy scalars)."""
+    if isinstance(obj, dict):
+        return {str(k): _jsonify_for_results(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonify_for_results(v) for v in obj]
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    return str(obj)
+
+
+def _resolve_path_under_repo(repo_root: Path, raw: object) -> Path:
+    p = Path(str(raw).strip())
+    return p if p.is_absolute() else repo_root / p
+
+
 def _results_json_out_path(
     repo_root: Path,
     raw: Optional[str],
@@ -1091,9 +1118,18 @@ def _results_json_out_path(
     if raw is None:
         return None
     if raw == "":
+        defaults_path = repo_root / "defaults.yaml"
+        try:
+            paths_cfg = yaml.safe_load(defaults_path.read_text(encoding="utf-8"))["paths"]
+            scratch_key = paths_cfg["results_scratch_dir"]
+        except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:
+            raise SystemExit(
+                f"Cannot read paths.results_scratch_dir from {defaults_path}: {exc}"
+            ) from exc
+        scratch_base = _resolve_path_under_repo(repo_root, scratch_key)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         name = f"{features}_{task}_{model}_{ts}.json"
-        return repo_root / "results" / "scratch" / name
+        return scratch_base / name
     return Path(raw).expanduser()
 
 
@@ -1107,13 +1143,13 @@ def _write_results_json(
     evaluation: EvaluationResult,
     n_features: int,
 ) -> None:
-    config = {
+    # Resolved from defaults.yaml / experiments.yaml (and CLI paths); excludes task,
+    # model, and fit-time search outcomes (those live under tuning / data / metrics).
+    config: Dict[str, object] = {
         "features": getattr(args, "features", ""),
         "feat_index": getattr(args, "feat_index", None),
         "csv": str(Path(args.csv).resolve()),
         "label_column": label_column,
-        "model": args.model,
-        "task": args.task,
         "random_state": args.random_state,
         "no_scaler": args.no_scaler,
         "no_clr": args.no_clr,
@@ -1131,9 +1167,27 @@ def _write_results_json(
         "svm_gamma": args.svm_gamma,
         "svm_kernel": args.svm_kernel,
         "scoring": args.scoring,
+    }
+    ex_idx = getattr(args, "experiment_index", None)
+    if ex_idx is not None and int(ex_idx) > 0:
+        config["experiment_index"] = int(ex_idx)
+        ex_over = getattr(args, "experiment_overrides", None)
+        if isinstance(ex_over, dict) and ex_over:
+            config["experiment_overrides"] = _jsonify_for_results(dict(ex_over))
+
+    data_block: Dict[str, object] = {
+        "n_features": int(n_features),
+    }
+    tuning_block: Dict[str, object] = {
+        "split": "validation",
+        "metric": args.scoring,
+        "score": float(tuning.validation_score),
         "pca_n_components_candidates": [int(x) for x in n_components_grid],
-        "best_hyperparameters": tuning.best_params,
-        "n_features": n_features,
+        "best_hyperparameters": _jsonify_for_results(dict(tuning.best_params)),
+    }
+    metrics_block: Dict[str, object] = {
+        "test": {"roc_auc": _float_for_json(evaluation.test_auc)},
+        "holdout": {"roc_auc": _float_for_json(evaluation.holdout_auc)},
     }
     payload = {
         "script": Path(__file__).name,
@@ -1142,12 +1196,9 @@ def _write_results_json(
         "model": args.model,
         "results_json": str(path.resolve()),
         "config": config,
-        "metrics": {
-            "test_roc_auc": _float_for_json(evaluation.test_auc),
-            "holdout_roc_auc": _float_for_json(evaluation.holdout_auc),
-            "validation_score": float(tuning.validation_score),
-            "validation_metric": args.scoring,
-        },
+        "data": data_block,
+        "tuning": tuning_block,
+        "metrics": metrics_block,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
@@ -1163,7 +1214,6 @@ def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
 
     use_scaler = not args.no_scaler
     use_clr = not args.no_clr
-    n_feat_cap = min(256, int(splits.X_train.shape[1]))
     n_components_grid = build_pca_n_components_grid(
         splits.X_train,
         use_clr=use_clr,
@@ -1171,7 +1221,6 @@ def _build_pca_grid(args: argparse.Namespace, splits: TaskSplits) -> List[int]:
         use_scaler=use_scaler,
         min_explained_variance=args.pca_min_variance,
         pca_random_state=args.random_state,
-        n_feature_dims=n_feat_cap,
     )
     print(
         _prefixed(

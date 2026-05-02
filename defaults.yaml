@@ -14,8 +14,6 @@ paths:
   # Run-level tetramer frequency table (input for scripts/fit_classifier.py --tetramer).
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
-  # CAP CSV layout from run_uc_cap_pipeline.py
-  cap_csv_pattern: outputs/uc_cap/uc{n_uc}_k{n_clusters}/cap{n_cap}.csv
 
 # Canonical Run -> train/val/test/holdout assignment (scripts/shared_splits.py).
 shared_splits:

@@ -4,7 +4,8 @@ Build Table 1 from tetramer classifier JSON metrics under results/tetramer/.
 
 Expects six files named {task}_{model}.json (e.g. cancer_diagnosis_knn.json),
 as written by scripts/fit_classifier.py: tasks cancer_diagnosis and
-cancer_type; models baseline, knn, and random_forest.
+cancer_type; models baseline, knn, and random_forest. Each file must have
+``metrics.test.roc_auc`` and ``metrics.holdout.roc_auc``.
 
 By default prints an HTML table with nested headers (task × test/holdout).
 Use --markdown for a GitHub-flavored pipe table with a two-line header.
@@ -57,11 +58,18 @@ def _load_metrics(
             if file_model != model:
                 raise SystemExit(f"{path}: expected model {model!r}, got {file_model!r}")
             metrics = data.get("metrics") or {}
-            test_a = metrics.get("test_roc_auc")
-            hold_a = metrics.get("holdout_roc_auc")
+            for split in ("test", "holdout"):
+                blob = metrics.get(split)
+                if not isinstance(blob, dict):
+                    raise SystemExit(
+                        f"{path}: expected metrics['{split}'] to be an object with "
+                        f"'roc_auc' (scripts/fit_classifier.py output layout)."
+                    )
+            test_v = metrics["test"].get("roc_auc")
+            hold_v = metrics["holdout"].get("roc_auc")
             out[(task, model)] = (
-                float(test_a) if test_a is not None else None,
-                float(hold_a) if hold_a is not None else None,
+                float(test_v) if test_v is not None else None,
+                float(hold_v) if hold_v is not None else None,
             )
     return out
 
