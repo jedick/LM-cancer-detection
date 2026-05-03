@@ -1,14 +1,14 @@
 {
-  "script": "fit_tetramer_classifier.py",
-  "timestamp": "2026-04-30T23:54:36.270938+00:00",
+  "script": "fit_classifier.py",
+  "timestamp": "2026-05-02T09:03:03.956802+00:00",
   "task": "cancer_type",
   "model": "baseline",
   "results_json": "/home/jedick/projects/LM-cancer-detection/results/tetramer/cancer_type_baseline.json",
   "config": {
+    "features": "tetramer",
+    "feat_index": null,
     "csv": "/home/sequence/LM-cancer-detection/outputs/tetramer_frequencies.csv",
     "label_column": "sample_label",
-    "model": "baseline",
-    "task": "cancer_type",
     "random_state": 0,
     "no_scaler": false,
     "no_clr": false,
@@ -22,16 +22,34 @@
     "lr_c": "0.1,1.0,10.0",
     "lr_solver": "lbfgs,liblinear",
     "lr_class_weight": "none,balanced",
+    "svm_c": "0.1,1.0,10.0",
+    "svm_gamma": "scale,auto",
+    "svm_kernel": "rbf",
     "scoring": "f1_weighted",
+    "experiment_index": 4,
+    "experiment_overrides": {
+      "task": "cancer_type",
+      "model": "baseline"
+    }
+  },
+  "data": {
+    "n_features": 256
+  },
+  "tuning": {
+    "split": "validation",
+    "metric": "f1_weighted",
+    "score": 0.5902834008097166,
     "pca_n_components_candidates": [],
     "best_hyperparameters": {
       "strategy": "most_frequent"
     }
   },
   "metrics": {
-    "test_roc_auc": 0.5,
-    "holdout_roc_auc": 0.5,
-    "validation_score": 0.5902834008097166,
-    "validation_metric": "f1_weighted"
+    "test": {
+      "roc_auc": 0.5
+    },
+    "holdout": {
+      "roc_auc": 0.5
+    }
   }
 }

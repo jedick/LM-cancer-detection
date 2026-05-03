@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Build Table 1 from tetramer classifier JSON metrics under results/tetramer/.
+Build Table 3 from UC/CAP classifier JSON for a single feature triple.
 
-Expects eight files named {task}_{model}.json (e.g. cancer_diagnosis_knn.json),
-as written by scripts/fit_classifier.py: tasks cancer_diagnosis and
-cancer_type; models baseline, knn, svm, and random_forest. Each file must have
-``metrics.test.roc_auc`` and ``metrics.holdout.roc_auc``.
+Resolves ``results/uc_cap/<feat>/`` using ``experiments.yaml`` ``run_uc_cap_pipeline``
+rows merged over ``defaults.yaml`` (same ordering as ``helpers/list_uc_cap_feature_outputs.py``),
+then loads KNN, SVM, and random forest for both tasks and prints test and holdout ROC AUC
+as an HTML table (same nested header shape as ``helpers/table1_from_classifier.py``).
 
-By default prints an HTML table with nested headers (task × test/holdout).
-Use --markdown for a GitHub-flavored pipe table with a two-line header.
+Default triple matches the manuscript: *n*<sub>UC</sub> = 2000, *K* = 2000, *n*<sub>CAP</sub> = 10000.
 """
 
 from __future__ import annotations
@@ -19,13 +18,16 @@ import json
 import math
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
+
+import yaml
+
+from list_uc_cap_feature_outputs import merge_run_uc_cap_baseline
 
 TASKS = ("cancer_diagnosis", "cancer_type")
-MODELS = ("baseline", "knn", "svm", "random_forest")
+MODELS = ("knn", "svm", "random_forest")
 
 ROW_LABELS: Dict[str, str] = {
-    "baseline": "Majority class",
     "knn": "KNN",
     "svm": "SVM",
     "random_forest": "Random Forest",
@@ -37,14 +39,49 @@ TASK_HEADER = {
 }
 
 
-def _load_metrics(
-    tetramer_dir: Path,
+def _load_yaml(path: Path) -> Dict[str, Any]:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def resolve_feat_index(
+    repo_root: Path,
+    *,
+    n_uc: int,
+    n_clusters: int,
+    n_cap: int,
+) -> int:
+    """1-based ``FEAT`` index for the merged row matching the triple."""
+    defaults_cfg = _load_yaml(repo_root / "defaults.yaml")
+    experiments_cfg = _load_yaml(repo_root / "experiments.yaml")
+    base = merge_run_uc_cap_baseline(defaults_cfg)
+    rows = experiments_cfg.get("run_uc_cap_pipeline") or []
+    for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise SystemExit("experiments.yaml run_uc_cap_pipeline entries must be mappings")
+        merged: Dict[str, Any] = {**base, **row}
+        nu = int(merged["n_uc"])
+        nk = int(merged["n_clusters"])
+        nc_raw = merged["n_cap"]
+        if isinstance(nc_raw, str) and str(nc_raw).strip().lower() == "all":
+            nc: Union[int, str] = "all"
+        else:
+            nc = int(nc_raw)
+        if nu == n_uc and nk == n_clusters and nc == n_cap:
+            return i
+    raise SystemExit(
+        f"No run_uc_cap_pipeline row matches n_uc={n_uc}, n_clusters={n_clusters}, "
+        f"n_cap={n_cap} (after merging defaults.yaml baseline)."
+    )
+
+
+def _load_metrics_uc_cap(
+    uc_cap_subdir: Path,
 ) -> Dict[Tuple[str, str], Tuple[Optional[float], Optional[float]]]:
-    """Map (task, model) -> (test_roc_auc, holdout_roc_auc). None if JSON null."""
+    """Map (task, model) -> (test_roc_auc, holdout_roc_auc)."""
     out: Dict[Tuple[str, str], Tuple[Optional[float], Optional[float]]] = {}
     for task in TASKS:
         for model in MODELS:
-            path = tetramer_dir / f"{task}_{model}.json"
+            path = uc_cap_subdir / f"{task}_{model}.json"
             if not path.is_file():
                 raise SystemExit(
                     f"Missing expected JSON: {path}\n"
@@ -115,60 +152,51 @@ def format_table_html(
     return f"<table>\n{thead}{tbody}</table>\n"
 
 
-def format_table_markdown(
-    metrics: Dict[Tuple[str, str], Tuple[Optional[float], Optional[float]]],
-    *,
-    decimals: int,
-) -> str:
-    """Pipe table: duplicate task labels on row 1 (no colspan in GFM)."""
-    d1 = TASK_HEADER["cancer_diagnosis"]
-    d2 = TASK_HEADER["cancer_type"]
-    row1 = f"| | {d1} | {d1} | {d2} | {d2} |"
-    row2 = "| Model | Test | Holdout | Test | Holdout |"
-    sep = "| :--- | ---: | ---: | ---: | ---: |"
-    lines = [row1, row2, sep]
-    for model in MODELS:
-        label = ROW_LABELS[model]
-        vals = []
-        for task in TASKS:
-            test_v, hold_v = metrics[(task, model)]
-            vals.append(_fmt_cell(test_v, decimals=decimals))
-            vals.append(_fmt_cell(hold_v, decimals=decimals))
-        lines.append(f"| {label} | " + " | ".join(vals) + " |")
-    return "\n".join(lines) + "\n"
-
-
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--tetramer-dir",
+        "--uc-cap-dir",
         type=Path,
-        default=root / "results" / "tetramer",
-        help="Directory with {task}_{model}.json files (default: results/tetramer).",
+        default=root / "results" / "uc_cap",
+        help="Parent directory with per-feat subdirs (default: results/uc_cap).",
+    )
+    p.add_argument("--n-uc", type=int, default=2000, help="UC sequence budget (default: 2000).")
+    p.add_argument(
+        "--n-clusters",
+        type=int,
+        default=2000,
+        help="K-means K (default: 2000).",
+    )
+    p.add_argument(
+        "--n-cap",
+        type=int,
+        default=10000,
+        help="CAP sequences per run (default: 10000).",
     )
     p.add_argument(
         "--decimals",
         type=int,
         default=3,
-        help="Decimal places for AUC values (default: 3).",
-    )
-    p.add_argument(
-        "--markdown",
-        action="store_true",
-        help="Emit a pipe Markdown table instead of HTML.",
+        help="Decimal places for AUC values (default: 3, same as Table 1).",
     )
     args = p.parse_args()
-    tetramer_dir: Path = args.tetramer_dir.expanduser()
-    if not tetramer_dir.is_dir():
-        raise SystemExit(f"Not a directory: {tetramer_dir}")
+    uc_cap_dir = args.uc_cap_dir.expanduser()
+    if not uc_cap_dir.is_dir():
+        raise SystemExit(f"Not a directory: {uc_cap_dir}")
 
-    metrics = _load_metrics(tetramer_dir)
-    if args.markdown:
-        text = format_table_markdown(metrics, decimals=args.decimals)
-    else:
-        text = format_table_html(metrics, decimals=args.decimals)
-    print(text, end="", flush=True)
+    feat_idx = resolve_feat_index(
+        root,
+        n_uc=args.n_uc,
+        n_clusters=args.n_clusters,
+        n_cap=args.n_cap,
+    )
+    sub = uc_cap_dir / str(feat_idx)
+    if not sub.is_dir():
+        raise SystemExit(f"Missing UC/CAP results directory: {sub}")
+
+    metrics = _load_metrics_uc_cap(sub)
+    print(format_table_html(metrics, decimals=args.decimals), end="", flush=True)
     return 0
 
 

@@ -11,6 +11,11 @@ fit_classifier:
         task: cancer_diagnosis
         model: knn
 
+    - name: cancer_diagnosis_svm
+      overrides:
+        task: cancer_diagnosis
+        model: svm
+
     - name: cancer_diagnosis_random_forest
       overrides:
         task: cancer_diagnosis
@@ -25,6 +30,11 @@ fit_classifier:
       overrides:
         task: cancer_type
         model: knn
+
+    - name: cancer_type_svm
+      overrides:
+        task: cancer_type
+        model: svm
 
     - name: cancer_type_random_forest
       overrides:

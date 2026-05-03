@@ -1,9 +1,9 @@
 {
   "script": "fit_classifier.py",
-  "timestamp": "2026-05-02T09:04:04.525181+00:00",
+  "timestamp": "2026-05-03T00:51:46.847446+00:00",
   "task": "cancer_type",
-  "model": "random_forest",
-  "results_json": "/home/jedick/projects/LM-cancer-detection/results/tetramer/cancer_type_random_forest.json",
+  "model": "svm",
+  "results_json": "/home/jedick/projects/LM-cancer-detection/results/tetramer/cancer_type_svm.json",
   "config": {
     "features": "tetramer",
     "feat_index": null,
@@ -26,10 +26,10 @@
     "svm_gamma": "scale,auto",
     "svm_kernel": "rbf",
     "scoring": "f1_weighted",
-    "experiment_index": 6,
+    "experiment_index": 7,
     "experiment_overrides": {
       "task": "cancer_type",
-      "model": "random_forest"
+      "model": "svm"
     }
   },
   "data": {
@@ -38,20 +38,26 @@
   "tuning": {
     "split": "validation",
     "metric": "f1_weighted",
-    "score": 0.9326926412934115,
-    "pca_n_components_candidates": [],
+    "score": 1.0,
+    "pca_n_components_candidates": [
+      256,
+      128,
+      64,
+      32
+    ],
     "best_hyperparameters": {
-      "n_estimators": 200,
-      "max_depth": null,
-      "min_samples_leaf": 1
+      "n_components": 256,
+      "C": 10.0,
+      "gamma": "scale",
+      "kernel": "rbf"
     }
   },
   "metrics": {
     "test": {
-      "roc_auc": 0.981945624468989
+      "roc_auc": 0.9993627867459643
     },
     "holdout": {
-      "roc_auc": 0.5353535353535355
+      "roc_auc": 0.2722222222222222
     }
   }
 }

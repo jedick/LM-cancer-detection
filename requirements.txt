@@ -16,5 +16,5 @@ scikit-learn==1.8.0
 pandas>=2.0.0
 pyarrow>=14.0.0
 
-# scripts/build_uc_cap_sequence_cache.py, scripts/run_uc_cap_pipeline.py, helpers/list_uc_cap_feature_outputs.py, helpers/table1_from_classifier.py
+# Used in scripts and helpers for reading YAML data
 PyYAML>=6.0

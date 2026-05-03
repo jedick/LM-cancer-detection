@@ -43,6 +43,9 @@ For random forest, we used the same CLR and standardization but did not use PCA.
 the maximum depth of trees (unlimited depth or a cap of 10), and the minimum number of training samples required to form a leaf (1 or 2),
 again using only the validation split.
 
+For SVM, we used the same centered log-ratio transform, standardization, and PCA construction as for KNN (including the same PCA candidate sizes and the rule that each candidate retained at least 90% of the variance on the training fold).
+We fit a support vector machine with an RBF kernel and jointly tuned the PCA component count, the penalty parameter C, and the kernel width parameter gamma (scikit-learn’s *scale* versus *auto* settings), using only the validation split.
+
 After choosing hyperparameters on the validation split, we fit each final pipeline on the training split.
 
 ### Classification using cluster abundance profiles
@@ -68,10 +71,11 @@ These CAP vectors were then used as the feature matrix for supervised classifica
 
 We defined two binary classification tasks: cancer vs healthy (diagnosis) and breast vs colorectal cancer (cancer type).
 Performance metrics (AUC - area under the receiver operating characteristic curve) are reported below for each task and model on the test and holdout splits.
+The sections are for different features used for classification: tetramer frequencies based on simple run-level aggregation and cluster abundance profiles derived from sequence-level unsupervised clustering.
 
 ### Tetramer-based classifiers
 
-Table 1 summarizes ROC AUC on the test and holdout splits for each task for three models: a majority-class baseline, K nearest neighbors (KNN), and random forest.
+Table 1 summarizes ROC AUC on the test and holdout splits for each task for four models: a majority-class baseline, K nearest neighbors (KNN), a support vector machine (SVM), and random forest.
 
 <!-- classifier-table-1 -->
 <table>
@@ -90,16 +94,125 @@ Table 1 summarizes ROC AUC on the test and holdout splits for each task for thre
 <td>Majority class</td><td>0.500</td><td>0.500</td><td>0.500</td><td>0.500</td>
 </tr>
 <tr>
-<td>KNN</td><td>0.645</td><td>0.505</td><td>0.956</td><td>0.310</td>
+<td>KNN</td><td>0.661</td><td>0.521</td><td>0.948</td><td>0.327</td>
 </tr>
 <tr>
-<td>Random Forest</td><td>0.705</td><td>0.558</td><td>0.983</td><td>0.457</td>
+<td>SVM</td><td>0.718</td><td>0.575</td><td>0.999</td><td>0.272</td>
+</tr>
+<tr>
+<td>Random Forest</td><td>0.706</td><td>0.590</td><td>0.982</td><td>0.535</td>
 </tr>
 </tbody>
 </table>
 
 <!-- /classifier-table-1 -->
 
-On the test split, KNN and RF both outperform the majority-class baseline for each task.
-On the holdout split, both models have modest gains over the baseline for cancer diagnosis and score below the baseline for cancer type prediction.
-RF achieves higher AUC than KNN in every test and holdout split.
+For both tasks, all models outperform the majority-class baseline on the test split, especially for the cancer type prediction task.
+The picture looks different on the holdout split.
+Here, models show modest gains over the baseline for cancer diagnosis, while all models except for RF score below the baseline for cancer type prediction.
+While SVM is the model with the best performance across tasks in the test split, only RF scores above the baseline in both holdout splits.
+
+### UC/CAP-based classifiers
+
+We explored different settings for *n*<sub>UC</sub> (number of sequences from each run used to build unsupervised clusters), *K* (number of clusters retained), and *n*<sub>CAP</sub> (number of sequences from each run assigned to cluster centroids).
+Table 2 summarizes results of three classifiers on the *test data only* (in-study splits).
+
+<!-- classifier-table-2 -->
+<table>
+<thead>
+<tr>
+<th rowspan="2"><i>n</i><sub>UC</sub></th>
+<th rowspan="2"><i>K</i></th>
+<th rowspan="2"><i>n</i><sub>CAP</sub></th>
+<th colspan="3">Cancer diagnosis AUC (test)</th>
+<th colspan="3">Cancer type AUC (test)</th>
+</tr>
+<tr>
+<th>KNN</th>
+<th>SVM</th>
+<th>RF</th>
+<th>KNN</th>
+<th>SVM</th>
+<th>RF</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1000</td><td>2000</td><td>5000</td><td>0.686</td><td>0.756</td><td>0.743</td><td>0.991</td><td>1.000</td><td>1.000</td>
+</tr>
+<tr>
+<td>2000</td><td>2000</td><td>5000</td><td>0.698</td><td>0.789</td><td>0.744</td><td>0.996</td><td>1.000</td><td>0.999</td>
+</tr>
+<tr>
+<td>1000</td><td>5000</td><td>5000</td><td>0.704</td><td>0.776</td><td>0.735</td><td>0.996</td><td>1.000</td><td>1.000</td>
+</tr>
+<tr>
+<td>2000</td><td>5000</td><td>5000</td><td>0.705</td><td>0.784</td><td>0.737</td><td>0.978</td><td>1.000</td><td>1.000</td>
+</tr>
+<tr>
+<td>1000</td><td>2000</td><td>10000</td><td>0.728</td><td>0.762</td><td>0.733</td><td>0.994</td><td>1.000</td><td>0.998</td>
+</tr>
+<tr>
+<td>2000</td><td>2000</td><td>10000</td><td>0.736</td><td>0.790</td><td>0.741</td><td>0.997</td><td>1.000</td><td>1.000</td>
+</tr>
+<tr>
+<td>1000</td><td>5000</td><td>10000</td><td>0.694</td><td>0.789</td><td>0.738</td><td>0.999</td><td>1.000</td><td>1.000</td>
+</tr>
+<tr>
+<td>2000</td><td>5000</td><td>10000</td><td>0.676</td><td>0.770</td><td>0.741</td><td>0.993</td><td>1.000</td><td>1.000</td>
+</tr>
+</tbody>
+</table>
+
+<!-- /classifier-table-2 -->
+
+The UC/CAP feature set generated with *n*<sub>UC</sub> = 2000, *K* = 2000, and *n*<sub>CAP</sub> = 10000 showed good performance across tasks and models, so we chose it for the remaining analysis.
+
+Table 3 lists the AUC values for each model across tasks and splits (test or holdout).
+
+<!-- classifier-table-3 -->
+<table>
+<thead>
+<tr>
+<th rowspan="2">Model</th>
+<th colspan="2">Cancer diagnosis AUC</th>
+<th colspan="2">Cancer type AUC</th>
+</tr>
+<tr>
+<th>Test</th><th>Holdout</th><th>Test</th><th>Holdout</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>KNN</td><td>0.736</td><td>0.466</td><td>0.997</td><td>0.500</td>
+</tr>
+<tr>
+<td>SVM</td><td>0.790</td><td>0.664</td><td>1.000</td><td>0.488</td>
+</tr>
+<tr>
+<td>Random Forest</td><td>0.741</td><td>0.573</td><td>1.000</td><td>0.380</td>
+</tr>
+</tbody>
+</table>
+
+<!-- /classifier-table-3 -->
+
+For cancer diagnosis, SVM is the model with the best performance on holdout data.
+For cancer type prediction, KNN is the only model that is on par with the baseline (majority-class) prediction.
+Both SVM and Random Forest show sub-baseline performance on cancer type holdout data even though they achieved perfect classification on the in-study test splits.
+
+## Discussion
+
+Scores are consistently lower on the holdout splits, emphasizing over-optimistic metrics computed from in-study test splits.
+
+The high test AUC scores >0.9 for cancer type prediction makes sense because the datasets for breast and colorectal cancer come from different studies.
+The sample collection and sequencing is different from study to study, so the models have an easy time fitting to these differences.
+In contrast, the lower test AUC scores near 0.7 for cancer diagnosis is expected for models that are challenged with distinguishing between cancer and healthy samples from the same studies.
+
+Because the models learned differences between studies rather than biologically meaningful differences between cancer types, cancer type prediction has a huge performance drop for holdout data from studies the models haven't been trained on.
+On the other hand, the performance is lower in the holdout split but often remains above baseline for cancer diagnosis, suggesting that the models learned biological differences between cancer and healthy samples that transfer to new studies.
+
+Comparing the holdout splits in Tables 1 and 3, there is no clear net advantage to sequence clustering over run-level tetramer frequencies.
+For cancer diagnosis, using UC/CAP instead of tetramer features leads to higher holdout AUC only for the SVM.
+For cancer type, KNN and SVM achieve higher holdout AUC with UC/CAP (but still not above baseline),
+whereas random forest shows a large holdout decline relative to the tetramer-based model despite near-perfect in-study test scores.
