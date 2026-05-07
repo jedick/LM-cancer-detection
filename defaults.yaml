@@ -17,7 +17,7 @@ paths:
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
 
-# Canonical Run -> train/val/test/holdout assignment (scripts/shared_splits.py).
+# Canonical Run -> train/val/test/holdout assignment (scripts/shared_utilities.py).
 shared_splits:
   random_state: 0
 
@@ -68,6 +68,40 @@ fit_classifier:
   # Optional output path for metrics JSON; null disables JSON output (experiments may set via template).
   results_json: null
 
+# build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
+sequence_cache:
+  n_max_per_run: 10000
+  parquet_compression: zstd
+
+# Baseline UC/CAP pipeline parameters. The script takes only --feat; list entries here are
+# merged in order into one baseline dict, then experiments.yaml rows merge over that for --feat >= 1 (Makefile FEAT=...).
+run_uc_cap_pipeline:
+  # n_uc: Number of cached sequences per run used to fit UC (MiniBatchKMeans on train runs only).
+  # n_clusters: K for k-means (number of cluster centroids / CAP feature dimension).
+  # n_cap: Sequences per run for CAP, or the string 'all' to stream every sequence from per-run
+  #   count files under paths.outputs_dir (see run_uc_cap_pipeline.py).
+  - { n_uc: 10, n_clusters: 20, n_cap: 50 }
+  # Remaining keys (second list fragment merges over the triple above).
+  - random_state: 0 # Random seed for PCA and MiniBatchKMeans.
+    # Cumulative explained-variance target for PCA when pca_components is null.
+    pca_variance: 0.95
+    # Fixed PCA component count before k-means; null means use pca_variance instead.
+    pca_components: null
+    # Whether to normalize each sequence 4-mer vector to relative frequencies before further transforms.
+    seq_normalize: true
+    # Whether to apply log1p after optional per-sequence normalization.
+    seq_log1p: false
+    # Post-aggregation transform on run-level CAP vectors: none or clr.
+    cap_transform: 'none'
+    # Pseudocount added to proportions when cap_transform is clr.
+    clr_pseudocount: 1.0e-6
+    # MiniBatchKMeans batch size.
+    batch_size: 8192
+    # MiniBatchKMeans max iterations.
+    max_iter: 200
+    # CSV row chunk size when n_cap is all (streaming from per-run count files).
+    chunk_size: 20000
+
 # HyenaDNA fine-tuning (scripts/train_hyenadna.py, scripts/build_torch_dataset.py).
 # Optional --expt overlays train_hyenadna.experiments in experiments.yaml (1-based index).
 train_hyenadna:
@@ -103,38 +137,4 @@ train_hyenadna:
   # Optional metrics JSON path; null disables. Empty string (CLI --results-json) uses
   # results/scratch/train_hyenadna_<task>_<utc>.json. Experiments may set via template.
   results_json: null
-
-# build_uc_cap_sequence_cache.py — rows kept per run in the Parquet cache.
-sequence_cache:
-  n_max_per_run: 10000
-  parquet_compression: zstd
-
-# Baseline UC/CAP pipeline parameters. The script takes only --feat; list entries here are
-# merged in order into one baseline dict, then experiments.yaml rows merge over that for --feat >= 1 (Makefile FEAT=...).
-run_uc_cap_pipeline:
-  # n_uc: Number of cached sequences per run used to fit UC (MiniBatchKMeans on train runs only).
-  # n_clusters: K for k-means (number of cluster centroids / CAP feature dimension).
-  # n_cap: Sequences per run for CAP, or the string 'all' to stream every sequence from per-run
-  #   count files under paths.outputs_dir (see run_uc_cap_pipeline.py).
-  - { n_uc: 10, n_clusters: 20, n_cap: 50 }
-  # Remaining keys (second list fragment merges over the triple above).
-  - random_state: 0 # Random seed for PCA and MiniBatchKMeans.
-    # Cumulative explained-variance target for PCA when pca_components is null.
-    pca_variance: 0.95
-    # Fixed PCA component count before k-means; null means use pca_variance instead.
-    pca_components: null
-    # Whether to normalize each sequence 4-mer vector to relative frequencies before further transforms.
-    seq_normalize: true
-    # Whether to apply log1p after optional per-sequence normalization.
-    seq_log1p: false
-    # Post-aggregation transform on run-level CAP vectors: none or clr.
-    cap_transform: 'none'
-    # Pseudocount added to proportions when cap_transform is clr.
-    clr_pseudocount: 1.0e-6
-    # MiniBatchKMeans batch size.
-    batch_size: 8192
-    # MiniBatchKMeans max iterations.
-    max_iter: 200
-    # CSV row chunk size when n_cap is all (streaming from per-run count files).
-    chunk_size: 20000
 

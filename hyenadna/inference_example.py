@@ -11,8 +11,7 @@
 
 #@title Single example
 import torch
-from standalone_hyenadna import HyenaDNAModel, CharacterTokenizer
-from huggingface_wrapper import HyenaDNAPreTrainedModel
+from hyenadna import HyenaDNAModel, HyenaDNAPreTrainedModel, CharacterTokenizer
 
 def inference_single():
 

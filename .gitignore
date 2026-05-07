@@ -3,3 +3,7 @@ outputs
 results/scratch/
 results/uc_cap/*/*baseline*
 checkpoints
+
+# Packaging artifacts (editable installs, builds)
+*.egg-info/
+*.dist-info/

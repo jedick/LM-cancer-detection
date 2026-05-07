@@ -41,6 +41,17 @@ fit_classifier:
         task: cancer_type
         model: random_forest
 
+# Flat list merged shallowly over the defaults.yaml run_uc_cap_pipeline baseline (feature sets; --feat 1..N).
+run_uc_cap_pipeline:
+  - { n_uc: 1000, n_clusters: 2000, n_cap: 5000 }
+  - { n_uc: 2000, n_clusters: 2000, n_cap: 5000 }
+  - { n_uc: 1000, n_clusters: 5000, n_cap: 5000 }
+  - { n_uc: 2000, n_clusters: 5000, n_cap: 5000 }
+  - { n_uc: 1000, n_clusters: 2000, n_cap: 10000 }
+  - { n_uc: 2000, n_clusters: 2000, n_cap: 10000 }
+  - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
+  - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
+
 train_hyenadna:
   results_json_template: results/hyenadna/{name}.json
   experiments:
@@ -60,14 +71,13 @@ train_hyenadna:
       overrides:
         task: cancer_type
         model: hyenadna-small-32k-seqlen
-
-# Flat list merged shallowly over the defaults.yaml run_uc_cap_pipeline baseline (feature sets; --feat 1..N).
-run_uc_cap_pipeline:
-  - { n_uc: 1000, n_clusters: 2000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 5000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 5000 }
-  - { n_uc: 1000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 2000, n_cap: 10000 }
-  - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
-  - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
+    - name: cancer_diagnosis_1k_epochs20
+      overrides:
+        task: cancer_diagnosis
+        model: hyenadna-tiny-1k-seqlen
+        epochs: 20
+    - name: cancer_type_1k_epochs20
+      overrides:
+        task: cancer_type
+        model: hyenadna-tiny-1k-seqlen
+        epochs: 20

@@ -3,7 +3,7 @@
 Fine-tune HyenaDNA with the classification head (hyenadna/standalone_hyenadna.py).
 
 Uses a pre-built per-run tensor cache from scripts/build_torch_dataset.py, the same
-train/val/test/holdout assignment as fit_classifier (shared_splits + tetramer CSV rows),
+train/val/test/holdout assignment as fit_classifier (shared_splits study CSV metadata),
 and reports run-level ROC-AUC on the test and holdout splits (one score per Run).
 
 Config: defaults.yaml (train_hyenadna + paths) with optional experiments.yaml (--expt).
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,12 +28,11 @@ from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-import fit_classifier as fc  # noqa: E402
-from hyenadna_fasta_data import (  # noqa: E402
+from shared_utilities import (
+    binary_roc_auc_from_scores,
+    run_task_table_from_study_csvs,
+)
+from hyenadna_fasta_data import (
     cache_slug,
     merge_train_hyenadna_config,
     model_max_length,
@@ -370,20 +368,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if len(class_names) != 2:
         raise SystemExit(f"Expected 2 classes; meta has {class_names!r}.")
 
-    tetramer_csv = resolve_repo_path(root, paths_cfg["tetramer_frequencies_csv"])
     label_arg = _norm_label_arg(merged.get("label_column"))
-    feature_df, label_column = fc._load_tetramer_table(tetramer_csv, label_arg)
-    feature_df = fc._attach_shared_splits(feature_df, config_path=defaults_path)
-    task_df = fc._prepare_task_table(feature_df, label_column, task)
-    splits = fc._build_task_splits_tetramer(task_df, label_column, task)
-    fc._require_binary_classes(splits.y_train, split_name="train split", task=task)
+    run_task_df, label_column = run_task_table_from_study_csvs(
+        config_path=defaults_path,
+        task=task,
+        label_column=label_arg,
+    )
+    expected = (
+        run_task_df.loc[:, ["Run", "split", "task_label"]]
+        .drop_duplicates(subset=["Run"])
+        .set_index("Run")
+    )
 
     enc = LabelEncoder()
-    enc.fit(splits.y_train)
+    y_train = run_task_df.loc[run_task_df["split"] == "train", "task_label"].to_numpy(
+        dtype=object
+    )
+    if y_train.size == 0:
+        raise SystemExit("No training runs found after shared split assignment.")
+    enc.fit(y_train)
     if list(enc.classes_.tolist()) != class_names:
         raise SystemExit(
             "LabelEncoder classes from tetramer table do not match meta.json classes. "
-            f"table={enc.classes_.tolist()} meta={class_names}. Rebuild cache."
+            f"study_csvs={enc.classes_.tolist()} meta={class_names}. Rebuild cache."
         )
 
     pos_class_index = 1
@@ -398,6 +405,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     all_records = _records_from_meta(meta, cache_dir)
     by_split: Dict[str, List[RunRecord]] = defaultdict(list)
     for r in all_records:
+        if r.run not in expected.index:
+            raise SystemExit(
+                f"Run {r.run!r} in meta.json not found in shared_splits run metadata."
+            )
+        exp_split = str(expected.loc[r.run, "split"])
+        exp_task_label = str(expected.loc[r.run, "task_label"])
+        if r.split != exp_split:
+            raise SystemExit(
+                f"Run {r.run!r} split mismatch: cache={r.split!r} expected={exp_split!r}. "
+                "Rebuild dataset cache."
+            )
+        if r.task_label != exp_task_label:
+            raise SystemExit(
+                f"Run {r.run!r} task_label mismatch: cache={r.task_label!r} "
+                f"expected={exp_task_label!r}. Rebuild dataset cache."
+            )
         by_split[r.split].append(r)
 
     train_entries = by_split["train"]
@@ -458,7 +481,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for ep in range(1, epochs + 1):
         print(f"\n--- Epoch {ep}/{epochs} ---", flush=True)
         last_loss = train_epoch(model, train_loader, opt, device)
-        test_auc = fc._binary_roc_auc_from_scores(
+        test_auc = binary_roc_auc_from_scores(
             *run_level_scores(
                 model,
                 test_entries,
@@ -470,7 +493,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         hold_auc = float("nan")
         if holdout_entries:
-            hold_auc = fc._binary_roc_auc_from_scores(
+            hold_auc = binary_roc_auc_from_scores(
                 *run_level_scores(
                     model,
                     holdout_entries,

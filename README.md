@@ -68,13 +68,9 @@ See the table for an overview of all the steps and read below for details.
 | 7. HyenaDNA torch dataset | build_torch_dataset.py | `make torch_dataset` |
 | 8. HyenaDNA classifier | train_hyenadna.py | `make train_hyenadna` |
 
-- Use `make fit_tetramer EXPT=1` to run a single experiment
-- Use`make fit_tetramer EXPT=0` to run all experiments.
-- The `EXPT=0` Make targets support incremental rebuilds and `-j` for parallel execution (for example, `make -j4 fit_tetramer EXPT=0`).
-- Use `make run_uc_cap FEAT=0` to generate all UC/CAP feature sets.
-- Use `make fit_uc_cap FEAT=0 EXPT=0` to run all experiments for all UC/CAP feature sets.
-- `make fit_uc_cap FEAT=0` or `EXPT=0` alone is rejected; a specific FEAT or EXPT  is required when sweeping over the other.
-- For finer control, run Python scripts directly with their supported options.
+- Append `EXPT=1` to the make commands in Steps 5--8 to run a single experiment
+- Append `EXPT=0` to run all experiments.
+  This make target supports incremental rebuilds and `-j` for parallel execution (for example, `make -j4 fit_tetramer EXPT=0`).
 
 If you want to see why Make would rebuild a target (including recursive prerequisite chains), use `make explain-<target>`.
 For example, run `make explain-run_uc_cap`; replace the part after `explain-` with any Make target name.
@@ -82,27 +78,23 @@ For example, run `make explain-run_uc_cap`; replace the part after `explain-` wi
 <details>
 <summary>Inputs/Outputs by step</summary>
 
-1. Download. Inputs: `data/**/*.csv`. Outputs: `fasta/<study>/<Run>.fasta.gz`.
-2. Tetramer counts. Inputs: `fasta/<study>/<Run>.fasta.gz`. Outputs: `outputs/tetramer_frequencies.csv`, `outputs/<cancer>/<study>/<Run>.csv.xz`.
-3. Tetramer classifier. Inputs: `outputs/tetramer_frequencies.csv`. Outputs: default run (`make fit_tetramer`) writes `results/scratch/tetramer_*.json` when JSON is emitted; experiment runs (`make fit_tetramer EXPT=N`) write under `results/tetramer/` using `experiments.yaml` `results_json_template` (`results/{features}/{name}.json` with `features=tetramer`).
-4. Sequence cache. Inputs: `outputs/<cancer>/<study>/<Run>.csv.xz`. Outputs: `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`.
-5. UC/CAP pipeline. Inputs: `defaults.yaml`, `experiments.yaml` (for `FEAT>=1` or `FEAT=0`), `outputs/uc_cap/sequence_counts_first_{n_max_per_run}_all_runs.parquet`. Outputs: `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` (baseline from `defaults.yaml`; further feature-set rows from `experiments.yaml`).
-6. UC/CAP classifier. Inputs: CAP CSVs under `outputs/uc_cap/`. Outputs: default `make fit_uc_cap` uses scratch JSON; Make-driven `FEAT`/`EXPT` sweeps write under `results/uc_cap/<FEAT>/` (see UC/CAP classifier subsection).
-7. HyenaDNA torch dataset. Inputs: `outputs/tetramer_frequencies.csv`, `fasta/<study>/<Run>.fasta.gz`, and `train_hyenadna` settings from `defaults.yaml`/`experiments.yaml`. Outputs: `outputs/torch_dataset/<model>__<task>__sets<num_sets>__L<max_length>/meta.json` and per-run tensors under `runs/*.pt`.
-8. HyenaDNA classifier. Inputs: cached torch dataset from step 7 and pretrained weights under `checkpoints/<model>/` (or download on demand). Outputs: default `make train_hyenadna` writes `results/scratch/train_hyenadna_<task>_<timestamp>.json`; experiment runs (`make train_hyenadna EXPT=N`) write under `results/hyenadna/{name}.json`.
 
 </details>
 
 ## Details
 
+### Download data
+
+`make download_data` reads study metadata files in `data/**/*.csv` and outputs FASTA files to `fasta/<study>/<Run>.fasta.gz`.
+
 ### Tetramer frequencies
 
-`calculate_tetramer_frequencies.py` builds tetramer (4-mer) profiles from the downloaded FASTA files.
+`make tetramer_frequencies` builds tetramer (4-mer) profiles from the downloaded FASTA files.
 The script only processes rows with `sample_used=TRUE` in the CSV files under `data/`.
 It writes two outputs with 256 feature columns in the same lexicographic ACGT 4-mer order:
 
 1. `outputs/tetramer_frequencies.csv` is used by the run-level tetramer classifer.
-It has one row per run with labels plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
+It has one row per run with `Run` plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
 2. The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` are used by the UC/CAP classifier.
 They hold 256 columns of **raw integer** 4-mer counts with no header row, one row per FASTA sequence in encounter order.
 
@@ -114,22 +106,32 @@ Add `EXPT=N` to get experiment name and model configuration from `experiments.ya
 Hyperparameters are chosen on validation, then ROC AUC is reported for test and holdout.
 Supported models are `baseline`, `knn`, `random_forest`, `logistic_regression`, and `svm`.
 
+Output files:
+- Default run (`make fit_tetramer`) writes `results/scratch/tetramer_*.json`
+- Experiment runs (`make fit_tetramer EXPT=N`) write under `results/tetramer/{name}.json` using name from `experiments.yaml`
+
 ### Unsupervised Clustering with Cluster Abundance Profiling
 
 This stage takes the per-run tetramer count files and generates feature sets (cluster abundance profiles) used for classification.
 
 - `make sequence_cache` builds a cached sequence-level tetramer table for UC/CAP exploration.
-  It keeps the first 10000 rows (configured in `defaults.yaml`) from each run file and saves the result in a Parquet table under `outputs/uc_cap`.
-- `make run_uc_cap` without arguments builds a CSV under `outputs/uc_cap/` with defaults from `defaults.yaml`.
+  It reads per-run tetramer counts from `outputs/<cancer>/<study>/<Run>.csv.xz`, kaeeps the first 10000 rows (configured in `defaults.yaml`) from each run,
+  and saves the result in a Parquet table at `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`.
+- `make run_uc_cap` without arguments builds a CSV at `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` with defaults from `defaults.yaml`.
   With `FEAT=N` / `FEAT=0`, it drives the same pipeline to generate one or all feature sets using parameters from `run_uc_cap_pipeline` in `experiments.yaml` .
   Each CSV row is a sequencing run; `cluster_*` columns are normalized per-run abundances.
+    - Use `make run_uc_cap FEAT=0` to generate all UC/CAP feature sets.
+    - Use `make fit_uc_cap FEAT=0 EXPT=0` to run all experiments for all UC/CAP feature sets.
+    - `make fit_uc_cap FEAT=0` or `EXPT=0` alone is rejected; a specific FEAT or EXPT is required when sweeping over the other.
 - `make fit_uc_cap` fits the UC/CAP features using the same models and hyperparameters described above for the tetramer classifier.
   With `FEAT=M EXPT=N` it writes results to `results/uc_cap/{M}/{name}.json` using the N'th named `fit_classifier` experiment in `experiments.yaml`
+    - Outputs: default `make fit_uc_cap` uses scratch JSON; Make-driven `FEAT`/`EXPT` sweeps write under `results/uc_cap/<FEAT>/`.
 
 ### HyenaDNA
 
 HyenaDNA code is located under `hyenadna/`.
-Be sure to install the dependencies for HyenaDNA listed in `requirements.txt`.
+Install it as a local package from the repository root (this is included in `requirements.txt`):
+`pip install -e .`
 
 Source files:
 - `standalone_hyenadna.py` was downloaded from [HazyResearch/hyena-dna](https://github.com/HazyResearch/hyena-dna)
@@ -141,3 +143,13 @@ Project execution:
 - Build cached tensors (default config): `make torch_dataset`
 - Train/evaluate HyenaDNA (default config): `make train_hyenadna`
 - Run a specific experiment row from `experiments.yaml`: `make torch_dataset EXPT=1 && make train_hyenadna EXPT=1`
+
+Inputs/outputs:
+- Torch dataset:
+  - Inputs: `outputs/tetramer_frequencies.csv`, `fasta/<study>/<Run>.fasta.gz`, and `train_hyenadna` settings from `defaults.yaml`/`experiments.yaml`.
+  - Outputs: `outputs/torch_dataset/<model>__<task>__sets<num_sets>__L<max_length>/meta.json` and per-run tensors under `runs/*.pt`.
+- HyenaDNA classifier:
+  - Inputs: cached torch dataset and pretrained weights under `checkpoints/<model>/` (or download on demand).
+  - Outputs:
+      - Default `make train_hyenadna` writes `results/scratch/train_hyenadna_<task>_<timestamp>.json`.
+      - Experiment runs (`make train_hyenadna EXPT=N`) write under `results/hyenadna/{name}.json`.

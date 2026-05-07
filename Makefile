@@ -105,7 +105,7 @@ help:
 	@echo ""
 
 $(TETRA_CSV): $(DATA_CSVS) $(ROOT)/scripts/calculate_tetramer_frequencies.py \
-		$(ROOT)/scripts/shared_splits.py
+		$(ROOT)/scripts/shared_utilities.py
 	@mkdir -p "$(dir $(TETRA_CSV))"
 	cd "$(ROOT)" && $(PYTHON) scripts/calculate_tetramer_frequencies.py
 
@@ -156,7 +156,7 @@ $(foreach i,$(TETRAMER_EXPERIMENT_INDICES),$(eval $(call tetramer_experiment_rul
 ifeq ($(strip $(EXPT)),0)
 torch_dataset: $(TETRA_CSV) $(ROOT)/scripts/build_torch_dataset.py \
 		$(ROOT)/scripts/hyenadna_fasta_data.py \
-		$(ROOT)/scripts/shared_splits.py \
+		$(ROOT)/scripts/shared_utilities.py \
 		$(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
 	@cd "$(ROOT)" && for i in $(HYENADNA_EXPERIMENT_INDICES); do \
@@ -165,14 +165,14 @@ torch_dataset: $(TETRA_CSV) $(ROOT)/scripts/build_torch_dataset.py \
 else ifneq ($(strip $(EXPT)),)
 torch_dataset: $(TETRA_CSV) $(ROOT)/scripts/build_torch_dataset.py \
 		$(ROOT)/scripts/hyenadna_fasta_data.py \
-		$(ROOT)/scripts/shared_splits.py \
+		$(ROOT)/scripts/shared_utilities.py \
 		$(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
 	cd "$(ROOT)" && $(PYTHON) scripts/build_torch_dataset.py --expt $(EXPT)
 else
 torch_dataset: $(TETRA_CSV) $(ROOT)/scripts/build_torch_dataset.py \
 		$(ROOT)/scripts/hyenadna_fasta_data.py \
-		$(ROOT)/scripts/shared_splits.py \
+		$(ROOT)/scripts/shared_utilities.py \
 		$(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
 	cd "$(ROOT)" && $(PYTHON) scripts/build_torch_dataset.py

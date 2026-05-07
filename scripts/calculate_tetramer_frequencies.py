@@ -8,6 +8,10 @@ counts 4-mers in each FASTA sequence (no counting across sequence boundaries), s
 counts for the run, converts to percentages (rounded to 3 decimals), and appends
 new rows to outputs/tetramer_frequencies.csv for ML training.
 
+`outputs/tetramer_frequencies.csv` is feature-only by design: one `Run` column plus
+the 256 lexicographic ACGT tetramer columns. Labels/splits are resolved from study
+CSV metadata via shared utilities downstream.
+
 Also writes per-run sequence-level 4-mer counts (256 integers per row, no header) to
 outputs/<cancer_type>/<study_name>/<Run>.csv.xz for downstream clustering, but only
 when the file does not already exist.
@@ -448,9 +452,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    label_fieldnames = ["cancer_type", "study_name", "Run", "sample_label"]
-    feature_fieldnames = list(TETRAMERS)
-    fieldnames = label_fieldnames + feature_fieldnames
+    fieldnames = ["Run", *list(TETRAMERS)]
 
     rows_written = 0
     rows_already_in_output = 0
@@ -643,12 +645,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
                 if run_needs_output_row:
                     pct = percentages_from_counts(counts)
-                    out_row: Dict[str, object] = {
-                        "cancer_type": cancer_type,
-                        "study_name": study_name,
-                        "Run": run,
-                        "sample_label": (row.get("sample_label") or "").strip(),
-                    }
+                    out_row: Dict[str, object] = {"Run": run}
                     for kmer, val in zip(TETRAMERS, pct):
                         out_row[kmer] = val
                     writer.writerow(out_row)

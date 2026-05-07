@@ -22,7 +22,6 @@ merged shallowly over the baseline). The only CLI flag is --feat.
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import pickle
 import re
@@ -38,13 +37,10 @@ import pyarrow.compute as pc
 import yaml
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import PCA
-from shared_splits import build_run_metadata, load_run_split_map
+from shared_utilities import RUN_PATTERN, TETRAMERS, build_run_metadata, load_run_split_map
 
 
-RUN_FILE_PATTERN = re.compile(r"^(SRR|ERR|DRR)\d+$")
-TETRAMERS: Tuple[str, ...] = tuple(
-    "".join(p) for p in itertools.product("ACGT", repeat=4)
-)
+RUN_FILE_PATTERN = RUN_PATTERN
 
 
 class SequenceTransform:

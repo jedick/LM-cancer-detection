@@ -2,8 +2,8 @@
 """
 Build a disk cache of tokenized HyenaDNA tensors per sequencing run (FASTA → .pt).
 
-Reads the same run table and labels as scripts/fit_classifier.py --tetramer (tetramer
-frequencies CSV + shared_splits). Skips runs with missing FASTA or no tokenizable sequence
+Reads run-level labels/splits from study CSV metadata via shared utilities (not from
+tetramer_frequencies.csv). Skips runs with missing FASTA or no tokenizable sequence
 content. Reuse the cache with scripts/train_hyenadna.py.
 
 Config: defaults.yaml (train_hyenadna + paths) with optional experiments.yaml (--expt).
@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,10 +23,6 @@ from sklearn.preprocessing import LabelEncoder
 from tqdm import tqdm
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-import fit_classifier as fc  # noqa: E402
 from hyenadna_fasta_data import (  # noqa: E402
     cache_slug,
     fasta_path_for_run,
@@ -38,6 +33,7 @@ from hyenadna_fasta_data import (  # noqa: E402
     resolve_repo_path,
     run_to_tensors,
 )
+from shared_utilities import require_binary_classes, run_task_table_from_study_csvs
 
 DATASET_SCHEMA = "hyenadna_torch_dataset_v1"
 DATASET_VERSION = 1
@@ -87,7 +83,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     paths_cfg = _paths_cfg(defaults_path)
-    tetramer_csv = resolve_repo_path(root, paths_cfg["tetramer_frequencies_csv"])
     fasta_dir_key = str(paths_cfg["fasta_dir"]).strip()
     torch_root = resolve_repo_path(
         root, str(paths_cfg.get("torch_dataset_dir", "outputs/torch_dataset")).strip()
@@ -116,16 +111,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    feature_df, label_column = fc._load_tetramer_table(tetramer_csv, label_arg)
-    feature_df = fc._attach_shared_splits(feature_df, config_path=defaults_path)
-    task_df = fc._prepare_task_table(feature_df, label_column, task)
-    splits = fc._build_task_splits_tetramer(task_df, label_column, task)
-    fc._require_binary_classes(splits.y_train, split_name="train split", task=task)
-    fc._require_binary_classes(splits.y_val, split_name="validation split", task=task)
-    fc._require_binary_classes(splits.y_test, split_name="test split", task=task)
+    task_df, label_column = run_task_table_from_study_csvs(
+        config_path=defaults_path,
+        task=task,
+        label_column=label_arg,
+    )
+    y_train = task_df.loc[task_df["split"] == "train", "task_label"].to_numpy(dtype=object)
+    y_val = task_df.loc[task_df["split"] == "val", "task_label"].to_numpy(dtype=object)
+    y_test = task_df.loc[task_df["split"] == "test", "task_label"].to_numpy(dtype=object)
+    require_binary_classes(y_train, split_name="train split", task=task)
+    require_binary_classes(y_val, split_name="validation split", task=task)
+    require_binary_classes(y_test, split_name="test split", task=task)
 
     label_enc = LabelEncoder()
-    label_enc.fit(splits.y_train)
+    label_enc.fit(y_train)
     class_names = [str(x) for x in label_enc.classes_.tolist()]
 
     tokenizer = make_character_tokenizer(max_length)

@@ -6,7 +6,7 @@ Modes (mutually exclusive):
   --tetramer   Inputs: paths.tetramer_frequencies_csv (256 ACGT tetramer columns).
   --uc_cap     Inputs: CAP CSV from run_uc_cap_pipeline (cluster_* columns).
 
-Both modes use scripts/shared_splits.py for train/val/test/holdout, support the same
+Both modes use scripts/shared_utilities.py for train/val/test/holdout, support the same
 model families and hyperparameter grids from defaults.yaml (section fit_classifier), and
 optional experiment overlays from experiments.yaml (fit_classifier.experiments).
 
@@ -30,7 +30,22 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 import yaml
-from shared_splits import HOLDOUT, TEST, TRAIN, VAL, add_split_column, load_run_split_map
+from shared_utilities import (
+    HOLDOUT,
+    TEST,
+    TRAIN,
+    VAL,
+    add_split_column,
+    binary_roc_auc_from_scores,
+    build_task_splits,
+    build_run_metadata,
+    load_tetramer_features,
+    load_run_split_map,
+    prepare_task_table,
+    require_binary_classes,
+    resolve_label_column,
+    TETRAMERS,
+)
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
@@ -44,11 +59,6 @@ from sklearn.svm import SVC
 
 
 # ----- Constants -----
-
-TETRAMERS: Tuple[str, ...] = tuple(
-    "".join(p) for p in itertools.product("ACGT", repeat=4)
-)
-CANCER_LABELS: Tuple[str, str] = ("breast_cancer", "colorectal_cancer")
 T = TypeVar("T")
 
 MODEL_CHOICES = ("baseline", "knn", "random_forest", "logistic_regression", "svm")
@@ -192,7 +202,7 @@ def _validate_csv_splits(df: pd.DataFrame, expected: Dict[str, str]) -> None:
             [f"{run}: csv={obs}, expected={exp}" for run, obs, exp in mismatches[:10]]
         )
         raise SystemExit(
-            "CSV split column does not match shared_splits.py-derived splits. "
+            "CSV split column does not match shared_utilities.py-derived splits. "
             f"First mismatches: {msg}"
         )
 
@@ -428,119 +438,44 @@ def _build_model_grids(args: argparse.Namespace) -> ModelGrids:
 # ----- Data loading and task splits -----
 
 
-def _resolve_label_column(fieldnames: Sequence[str], explicit: Optional[str]) -> str:
-    names = set(fieldnames)
-    if explicit is not None:
-        if explicit not in names:
-            raise SystemExit(f"Label column {explicit!r} not found in CSV.")
-        return explicit
-    if "sample_labels" in names:
-        return "sample_labels"
-    if "sample_label" in names:
-        return "sample_label"
-    raise SystemExit(
-        "No label column found. Expected 'sample_label' or 'sample_labels'; "
-        "use label_column in defaults.yaml."
-    )
-
-
 def _load_tetramer_table(csv_path: Path, label_column_arg: Optional[str]) -> Tuple[pd.DataFrame, str]:
-    df = pd.read_csv(csv_path)
-    if df.empty:
-        raise SystemExit("No data rows in CSV.")
-    label_column = _resolve_label_column(df.columns, label_column_arg)
-    required = {"Run", "study_name", label_column, *TETRAMERS}
-    missing = sorted(required - set(df.columns))
-    if missing:
-        raise SystemExit(
-            f"CSV is missing {len(missing)} required columns (first few: {missing[:5]!r})."
-        )
-    out = df.copy()
-    for col in ["Run", "study_name", label_column]:
-        out[col] = out[col].astype(str).str.strip()
-        if (out[col] == "").any():
-            raise SystemExit(f"Found empty {col!r} values in CSV.")
-    return out, label_column
+    # Tetramer CSV is used for features only. Labels/splits are derived deterministically
+    # from `data/` study CSVs via shared_utilities.py, then merged by Run.
+    repo_root = Path(__file__).resolve().parent.parent
+    config_path = repo_root / "defaults.yaml"
 
-
-def _attach_shared_splits(df: pd.DataFrame, *, config_path: Path) -> pd.DataFrame:
-    return add_split_column(df, config_path=config_path, split_column="split")
-
-
-def _prepare_task_table(df: pd.DataFrame, label_column: str, task: str) -> pd.DataFrame:
-    out = df.copy()
-    if task == "cancer_diagnosis":
-        out["task_label"] = np.where(
-            out[label_column].isin(CANCER_LABELS),
-            "cancer",
-            "healthy",
-        )
-        return out
-    if task == "cancer_type":
-        out = out[out[label_column].isin(CANCER_LABELS)].copy()
-        if out.empty:
-            raise SystemExit("Task cancer_type selected, but no cancer samples were found.")
-        out["task_label"] = out[label_column].astype(str)
-        return out
-    raise SystemExit(f"Unknown task value: {task!r}")
-
-
-def _xy_tetramer(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-    X = df.loc[:, list(TETRAMERS)].to_numpy(dtype=np.float64, copy=False)
-    y = df["task_label"].to_numpy(dtype=object)
-    return X, y
-
-
-def _xy_uc_cap(df: pd.DataFrame, feature_cols: Sequence[str]) -> Tuple[np.ndarray, np.ndarray]:
-    X = df.loc[:, list(feature_cols)].to_numpy(dtype=np.float64, copy=False)
-    y = df["task_label"].to_numpy(dtype=object)
-    return X, y
-
-
-def _build_task_splits_tetramer(df: pd.DataFrame, label_column: str, task: str) -> TaskSplits:
-    task_df = _prepare_task_table(df, label_column, task)
-    frames = {
-        TRAIN: task_df[task_df["split"] == TRAIN],
-        VAL: task_df[task_df["split"] == VAL],
-        TEST: task_df[task_df["split"] == TEST],
-        HOLDOUT: task_df[task_df["split"] == HOLDOUT],
-    }
-    for split_name in (TRAIN, VAL, TEST):
-        if frames[split_name].empty:
-            raise SystemExit(f"No {split_name} rows found after task filtering.")
-    X_train, y_train = _xy_tetramer(frames[TRAIN])
-    X_val, y_val = _xy_tetramer(frames[VAL])
-    X_test, y_test = _xy_tetramer(frames[TEST])
-    X_holdout, y_holdout = _xy_tetramer(frames[HOLDOUT])
-    return TaskSplits(
-        X_train=X_train,
-        y_train=y_train,
-        X_val=X_val,
-        y_val=y_val,
-        X_test=X_test,
-        y_test=y_test,
-        X_holdout=X_holdout,
-        y_holdout=y_holdout,
+    feat_df = load_tetramer_features(csv_path)
+    meta = build_run_metadata(config_path=config_path)
+    label_column = resolve_label_column(meta.columns, label_column_arg)
+    meta = add_split_column(meta, config_path=config_path, split_column="split")
+    run_meta = meta.loc[:, ["Run", label_column, "study_name", "split"]].drop_duplicates(
+        subset=["Run"]
     )
+    merged = feat_df.merge(run_meta, on="Run", how="left", validate="many_to_one")
+    if merged["split"].isna().any():
+        examples = (
+            merged.loc[merged["split"].isna(), "Run"].astype(str).unique().tolist()[:5]
+        )
+        raise SystemExit(
+            "Some Runs in tetramer_frequencies.csv were not assigned by shared split logic. "
+            f"Example Runs: {examples}"
+        )
+    return merged, label_column
 
 
-def _build_task_splits_uc_cap(
-    df: pd.DataFrame, label_column: str, task: str, feature_cols: Sequence[str]
+def _task_splits_from_table(
+    df: pd.DataFrame,
+    *,
+    label_column: str,
+    task: str,
+    feature_cols: Sequence[str],
 ) -> TaskSplits:
-    task_df = _prepare_task_table(df, label_column, task)
-    frames = {
-        TRAIN: task_df[task_df["split"] == TRAIN],
-        VAL: task_df[task_df["split"] == VAL],
-        TEST: task_df[task_df["split"] == TEST],
-        HOLDOUT: task_df[task_df["split"] == HOLDOUT],
-    }
-    for split_name in (TRAIN, VAL, TEST):
-        if frames[split_name].empty:
-            raise SystemExit(f"No {split_name} rows found after task filtering.")
-    X_train, y_train = _xy_uc_cap(frames[TRAIN], feature_cols)
-    X_val, y_val = _xy_uc_cap(frames[VAL], feature_cols)
-    X_test, y_test = _xy_uc_cap(frames[TEST], feature_cols)
-    X_holdout, y_holdout = _xy_uc_cap(frames[HOLDOUT], feature_cols)
+    task_df = prepare_task_table(df, label_column, task)
+    split_xy = build_task_splits(task_df, feature_cols=feature_cols, task=task)
+    X_train, y_train = split_xy[TRAIN]
+    X_val, y_val = split_xy[VAL]
+    X_test, y_test = split_xy[TEST]
+    X_holdout, y_holdout = split_xy[HOLDOUT]
     return TaskSplits(
         X_train=X_train,
         y_train=y_train,
@@ -551,14 +486,6 @@ def _build_task_splits_uc_cap(
         X_holdout=X_holdout,
         y_holdout=y_holdout,
     )
-
-
-def _require_binary_classes(y: np.ndarray, *, split_name: str, task: str) -> None:
-    classes = np.unique(y)
-    if classes.size != 2:
-        raise SystemExit(
-            f"Task {task!r} requires exactly 2 classes in {split_name}; got {classes.tolist()}."
-        )
 
 
 # ----- Feature preprocessing and pipelines -----
@@ -991,18 +918,7 @@ def _tune_model_on_validation(
 
 
 def _binary_roc_auc_from_scores(y_true_obj: np.ndarray, y_score: np.ndarray) -> float:
-    """Binary ROC AUC from scores (higher = positive class); NaN if undefined."""
-    y_true_obj = np.asarray(y_true_obj)
-    y_score = np.asarray(y_score, dtype=np.float64).ravel()
-    classes = np.unique(y_true_obj)
-    if classes.size != 2 or np.unique(y_true_obj).size < 2:
-        return float("nan")
-    pos_label = classes[1]
-    y_bin = y_true_obj == pos_label
-    try:
-        return float(roc_auc_score(y_bin, y_score))
-    except ValueError:
-        return float("nan")
+    return binary_roc_auc_from_scores(y_true_obj, y_score)
 
 
 def _evaluation_scores(pipe: Pipeline, X: np.ndarray) -> np.ndarray:
@@ -1253,21 +1169,31 @@ def run_classifier(args: argparse.Namespace, root: Path) -> int:
         cap_df = _load_cap_csv(Path(args.csv))
         _validate_csv_splits(cap_df, expected)
         feature_df = cap_df
-        label_column = _resolve_label_column(feature_df.columns, args.label_column)
+        label_column = resolve_label_column(feature_df.columns, args.label_column)
 
-    feature_df = _attach_shared_splits(feature_df, config_path=config_path)
+    feature_df = add_split_column(feature_df, config_path=config_path, split_column="split")
     if args.features == "tetramer":
-        splits = _build_task_splits_tetramer(feature_df, label_column, args.task)
+        splits = _task_splits_from_table(
+            feature_df,
+            label_column=label_column,
+            task=args.task,
+            feature_cols=TETRAMERS,
+        )
         n_features = len(TETRAMERS)
     else:
-        task_df_preview = _prepare_task_table(feature_df, label_column, args.task)
+        task_df_preview = prepare_task_table(feature_df, label_column, args.task)
         feature_cols = [c for c in task_df_preview.columns if c.startswith("cluster_")]
-        splits = _build_task_splits_uc_cap(feature_df, label_column, args.task, feature_cols)
+        splits = _task_splits_from_table(
+            feature_df,
+            label_column=label_column,
+            task=args.task,
+            feature_cols=feature_cols,
+        )
         n_features = len(feature_cols)
 
-    _require_binary_classes(splits.y_train, split_name="train split", task=args.task)
-    _require_binary_classes(splits.y_val, split_name="validation split", task=args.task)
-    _require_binary_classes(splits.y_test, split_name="test split", task=args.task)
+    require_binary_classes(splits.y_train, split_name="train split", task=args.task)
+    require_binary_classes(splits.y_val, split_name="validation split", task=args.task)
+    require_binary_classes(splits.y_test, split_name="test split", task=args.task)
     _print_dataset_summary(splits, prefix=prefix)
 
     grids = _build_model_grids(args)

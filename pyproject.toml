@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hyenadna"
+version = "0.0.0"
+description = "HyenaDNA (vendored) wrapper/package."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  # HyenaDNA upstream used transformers==4.26.1; we keep that as a minimum,
+  # but do not pin to an exact version.
+  "transformers>=4.26.1",
+
+  # Core runtime deps for the vendored HyenaDNA implementation.
+  "torch>=2.0.0",
+  "torchvision>=0.15.0",
+  "einops>=0.6.0",
+  "numpy>=1.24.0",
+  # HyenaDNA pre-trained checkpoints contain pickled objects referencing omegaconf types
+  "omegaconf>=2.0.0",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hyenadna"]
+
