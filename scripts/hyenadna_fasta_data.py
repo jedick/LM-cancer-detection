@@ -4,16 +4,10 @@
 from __future__ import annotations
 
 import gzip
-import re
-import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import yaml
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 from hyenadna import CharacterTokenizer
 
@@ -283,8 +277,3 @@ def run_to_tensors(
         torch.LongTensor(padded_masks),
         n_valid,
     )
-
-
-def cache_slug(model_name: str, task: str, num_sets: int, max_length: int) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", f"{model_name}__{task}__sets{num_sets}__L{max_length}")
-    return safe.strip("_")

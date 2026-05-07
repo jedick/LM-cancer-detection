@@ -3,7 +3,7 @@
 
 Public API
 ----------
-build_run_split_table()       Run + sample_label + study_name + cancer_type + split
+build_run_table()             Run + sample_label + study_name + cancer_type + split
 build_run_task_table(task)    extends the above with a task_label column
 require_binary_classes()      validates a label array has exactly two classes
 binary_roc_auc_from_scores()  ROC AUC from positive-class probability scores
@@ -207,7 +207,7 @@ def _apply_task_labels(df: pd.DataFrame, task: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def build_run_split_table(*, config_path: Optional[Path] = None) -> pd.DataFrame:
+def build_run_table(*, config_path: Optional[Path] = None) -> pd.DataFrame:
     """Return run metadata with canonical split assignments.
 
     Columns: Run, sample_label, study_name, cancer_type, split.
@@ -265,7 +265,7 @@ def build_run_task_table(task: str, *, config_path: Optional[Path] = None) -> pd
         df = build_run_task_table("cancer_diagnosis")
         train_df = df[df["split"] == "train"]
     """
-    return _apply_task_labels(build_run_split_table(config_path=config_path), task)
+    return _apply_task_labels(build_run_table(config_path=config_path), task)
 
 
 def require_binary_classes(y: np.ndarray, *, split_name: str, task: str) -> None:

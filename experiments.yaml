@@ -71,12 +71,12 @@ train_hyenadna:
       overrides:
         task: cancer_type
         model: hyenadna-small-32k-seqlen
-    - name: cancer_diagnosis_1k_epochs20
+    - name: cancer_diagnosis_1k_epochs5
       overrides:
         task: cancer_diagnosis
         model: hyenadna-tiny-1k-seqlen
-        epochs: 20
-    - name: cancer_type_1k_epochs20
+        epochs: 5
+    - name: cancer_type_1k_epochs5
       overrides:
         task: cancer_type
         model: hyenadna-tiny-1k-seqlen

@@ -37,7 +37,7 @@ import pyarrow.compute as pc
 import yaml
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.decomposition import PCA
-from shared_utilities import RUN_PATTERN, TETRAMERS, build_run_split_table
+from shared_utilities import RUN_PATTERN, TETRAMERS, build_run_table
 
 
 RUN_FILE_PATTERN = RUN_PATTERN
@@ -432,7 +432,7 @@ def run_pipeline_from_merged(
         raise SystemExit("No sequence rows found in cache for requested settings.")
     if len(cache_df.columns) != 259:
         raise SystemExit("Cache schema mismatch: expected 259 columns.")
-    run_meta = build_run_split_table(config_path=config_path)
+    run_meta = build_run_table(config_path=config_path)
     train_runs = set(run_meta.loc[run_meta["split"] == "train", "Run"])
 
     uc_dir = out_dir / f"uc{n_uc}_k{n_clusters}"

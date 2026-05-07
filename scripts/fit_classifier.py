@@ -1240,7 +1240,7 @@ def _parse_main_argv(argv: Optional[Sequence[str]]) -> argparse.Namespace:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parent.parent
     cli = _parse_main_argv(argv)
     expt = int(cli.expt) if cli.expt is not None else 0
     features = "tetramer" if cli.tetramer else "uc_cap"
@@ -1250,13 +1250,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         results_json_cli = None
 
     args = _load_experiment_args(
-        root,
+        repo_root,
         expt=expt,
         features=features,
         feat=cli.feat,
         results_json_cli=results_json_cli,
     )
-    return run_classifier(args, root)
+    return run_classifier(args, repo_root)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ Prefer functions that return a **combined table** over multiple functions that e
 - Result: every consumer imported 5–8 symbols and manually assembled the same table
 
 **Current design** — two composable entry points:
-- `build_run_split_table()` → Run + sample_label + study_name + cancer_type + split
+- `build_run_table()` → Run + sample_label + study_name + cancer_type + split
 - `build_run_task_table(task)` → extends the above with task_label; cancer_type task also filters rows
 - Consumers merge their own feature data onto this table by Run, then subset by split
 

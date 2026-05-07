@@ -4,18 +4,18 @@
 # Keep values here as the single source of truth for pipeline defaults.
 
 paths:
+  datasets_csv: datasets.csv
   data_dir: data
   fasta_dir: fasta
   outputs_dir: outputs
   results_dir: results
   # Ephemeral / local experiment outputs (gitignored); finalized copies go under results/
   results_scratch_dir: results/scratch
-  # HyenaDNA tensor caches from scripts/build_torch_dataset.py (per model/task/num_sets/L).
-  torch_dataset_dir: outputs/torch_dataset
-  datasets_csv: datasets.csv
   # Run-level tetramer frequency table (input for scripts/fit_classifier.py --tetramer).
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
+  # Feature-only per-run HyenaDNA tensors from scripts/build_run_tensors.py.
+  run_tensors_dir: outputs/run_tensors
 
 # Canonical Run -> train/val/test/holdout assignment (scripts/shared_utilities.py).
 shared_splits:
@@ -100,7 +100,14 @@ run_uc_cap_pipeline:
     # CSV row chunk size when n_cap is all (streaming from per-run count files).
     chunk_size: 20000
 
-# HyenaDNA fine-tuning (scripts/train_hyenadna.py, scripts/build_torch_dataset.py).
+# Feature-only run tensor cache (scripts/build_run_tensors.py).
+# One .pt file is written per run under paths.run_tensors_dir.
+build_run_tensors:
+  num_sets: 10
+  max_length: 32768
+  max_workers: 4
+
+# HyenaDNA fine-tuning (scripts/train_hyenadna.py).
 # Optional --expt overlays train_hyenadna.experiments in experiments.yaml (1-based index).
 train_hyenadna:
   # Binary task: cancer_diagnosis or cancer_type (same label rules as fit_classifier).

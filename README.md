@@ -42,7 +42,7 @@ TLDR:
 1. Install script dependencies from the repository root: `pip install -r requirements.txt`.
 2. Run `make fit_tetramer EXPT=0` to generate results files in `results/tetramer`.
 3. Run `make fit_uc_cap FEAT=0 EXPT=0` to generate results files in `results/uc_cap`.
-4. Run `make torch_dataset EXPT=0 && make train_hyenadna EXPT=0` to generate HyenaDNA results files in `results/hyenadna`.
+4. Run `make run_tensors && make train_hyenadna EXPT=0` to generate HyenaDNA results files in `results/hyenadna`.
 5. Use `helpers/table*.py` scripts to make manuscript tables from the results files.
 
 ---
@@ -65,7 +65,7 @@ See the table for an overview of all the steps and read below for details.
 | 4. Sequence cache | build_uc_cap_sequence_cache.py | `make sequence_cache` |
 | 5. UC/CAP pipeline | run_uc_cap_pipeline.py | `make run_uc_cap` |
 | 6. UC/CAP classifier | fit_classifier.py --uc_cap | `make fit_uc_cap` |
-| 7. HyenaDNA torch dataset | build_torch_dataset.py | `make torch_dataset` |
+| 7. HyenaDNA run tensors | build_run_tensors.py | `make run_tensors` |
 | 8. HyenaDNA classifier | train_hyenadna.py | `make train_hyenadna` |
 
 - Append `EXPT=1` to the make commands in Steps 5--8 to run a single experiment
@@ -140,16 +140,16 @@ Source files:
 - To run the inference example: `cd hyenadna; python -c 'import inference_example as ex; ex.inference_single()'`
 
 Project execution:
-- Build cached tensors (default config): `make torch_dataset`
+- Build cached tensors (default config): `make run_tensors`
 - Train/evaluate HyenaDNA (default config): `make train_hyenadna`
-- Run a specific experiment row from `experiments.yaml`: `make torch_dataset EXPT=1 && make train_hyenadna EXPT=1`
+- Run a specific experiment row from `experiments.yaml`: `make train_hyenadna EXPT=1`
 
 Inputs/outputs:
-- Torch dataset:
-  - Inputs: study metadata in `data/**/*.csv` and `datasets.csv`, `fasta/<study>/<Run>.fasta.gz`, and `train_hyenadna` settings from `defaults.yaml`/`experiments.yaml`.
-  - Outputs: `outputs/torch_dataset/<model>__<task>__sets<num_sets>__L<max_length>/meta.json` and per-run tensors under `runs/*.pt`.
+- Run tensors:
+  - Inputs: study metadata in `data/**/*.csv` and `datasets.csv`, `fasta/<study>/<Run>.fasta.gz`, and `build_run_tensors` settings from `defaults.yaml`.
+  - Outputs: one feature-only run tensor file per run at `outputs/run_tensors/<Run>.pt`.
 - HyenaDNA classifier:
-  - Inputs: cached torch dataset and pretrained weights under `checkpoints/<model>/` (or download on demand).
+  - Inputs: cached run tensors, run labels/splits from `scripts/shared_utilities.py`, and pretrained weights under `checkpoints/<model>/` (or download on demand).
   - Outputs:
       - Default `make train_hyenadna` writes `results/scratch/train_hyenadna_<task>_<timestamp>.json`.
       - Experiment runs (`make train_hyenadna EXPT=N`) write under `results/hyenadna/{name}.json`.
