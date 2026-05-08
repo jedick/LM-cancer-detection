@@ -3,7 +3,7 @@ outputs
 checkpoints
 results/scratch/
 results/uc_cap/*/*baseline*
-results/hyenadna/
+results/hyenadna*
 #results/hyenadna/*/*.csv
 #results/hyenadna/*/*training.json
 

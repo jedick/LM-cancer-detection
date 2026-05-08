@@ -16,10 +16,11 @@ import argparse
 import csv
 import json
 from collections import defaultdict
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, ContextManager, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -43,6 +44,8 @@ from hyenadna_fasta_data import (
 
 HEAD_MODES = ("last", "first", "pool", "sum")
 AGGREGATES = ("mean", "max")
+HALF_BATCH_SIZE = 0.5
+SET_SPLIT_INDEX = 5
 
 
 @dataclass(frozen=True)
@@ -190,17 +193,115 @@ def training_loss(
     model: torch.nn.Module,
     batch: Mapping[str, object],
     device: torch.device,
+    *,
+    amp_enabled: bool,
+    amp_dtype: torch.dtype,
 ) -> torch.Tensor:
+    loss_sum, denom = training_loss_sum_and_count(
+        model,
+        batch,
+        device,
+        amp_enabled=amp_enabled,
+        amp_dtype=amp_dtype,
+    )
+    if denom <= 0:
+        raise SystemExit("Training batch has zero valid sets after masking.")
+    return loss_sum / float(denom)
+
+
+def training_loss_sum_and_count(
+    model: torch.nn.Module,
+    batch: Mapping[str, object],
+    device: torch.device,
+    *,
+    amp_enabled: bool,
+    amp_dtype: torch.dtype,
+) -> Tuple[torch.Tensor, int]:
     input_ids = batch["input_ids"].to(device)
     bsz, n_set, seq_len = input_ids.shape
-    logits = model(input_ids.view(bsz * n_set, seq_len))
-    logits = logits.view(bsz, n_set, -1)
-    nv = batch["n_sets"]
-    labels = batch["label"].to(device)
-    mask = torch.arange(n_set, device=device).unsqueeze(0) < nv.to(device).unsqueeze(1)
-    flat_logits = logits[mask]
-    flat_y = labels.unsqueeze(1).expand(bsz, n_set)[mask]
-    return F.cross_entropy(flat_logits, flat_y)
+    with _amp_autocast(device, amp_enabled=amp_enabled, amp_dtype=amp_dtype):
+        logits = model(input_ids.view(bsz * n_set, seq_len))
+        logits = logits.view(bsz, n_set, -1)
+        nv = batch["n_sets"]
+        labels = batch["label"].to(device)
+        mask = torch.arange(n_set, device=device).unsqueeze(0) < nv.to(device).unsqueeze(1)
+        flat_logits = logits[mask]
+        flat_y = labels.unsqueeze(1).expand(bsz, n_set)[mask]
+    if flat_logits.numel() == 0:
+        return torch.zeros((), device=device), 0
+    return F.cross_entropy(flat_logits, flat_y, reduction="sum"), int(flat_y.shape[0])
+
+
+def _slice_batch_sets(
+    batch: Mapping[str, object],
+    *,
+    start: int,
+    end: int,
+) -> Dict[str, object]:
+    batch_input_ids = batch["input_ids"]
+    batch_attention_mask = batch["attention_mask"]
+    batch_n_sets = batch["n_sets"]
+    sub_n_sets = torch.clamp(batch_n_sets - start, min=0, max=max(end - start, 0))
+    return {
+        "input_ids": batch_input_ids[:, start:end, :],
+        "attention_mask": batch_attention_mask[:, start:end, :],
+        "n_sets": sub_n_sets,
+        "label": batch["label"],
+        "run": batch["run"],
+    }
+
+
+def _count_valid_sets(batch: Mapping[str, object]) -> int:
+    n_sets = batch["n_sets"]
+    if not isinstance(n_sets, torch.Tensor):
+        raise SystemExit("Expected batch n_sets to be a torch.Tensor.")
+    return int(n_sets.sum().item())
+
+
+def _resolve_train_batch_size(raw: object) -> Tuple[float, int, bool]:
+    value = float(raw)
+    if value == HALF_BATCH_SIZE:
+        return value, 1, True
+    if not value.is_integer() or value < 1:
+        raise SystemExit(
+            "train_hyenadna.batch_size must be a positive integer, or exactly 0.5 "
+            "to enable split-set microbatch mode."
+        )
+    return value, int(value), False
+
+
+def _resolve_amp_config(
+    merged: Mapping[str, object],
+    device: torch.device,
+) -> Tuple[bool, torch.dtype, str, bool]:
+    amp_requested = bool(merged.get("amp", False))
+    amp_dtype_raw = str(merged.get("amp_dtype", "float16")).strip().lower()
+    if amp_dtype_raw == "float16":
+        amp_dtype = torch.float16
+        use_grad_scaler = True
+    elif amp_dtype_raw == "bfloat16":
+        amp_dtype = torch.bfloat16
+        use_grad_scaler = False
+    else:
+        raise SystemExit("train_hyenadna.amp_dtype must be 'float16' or 'bfloat16'.")
+
+    if not amp_requested:
+        return False, amp_dtype, amp_dtype_raw, use_grad_scaler
+    if device.type != "cuda":
+        print("AMP requested but CUDA is unavailable; running in float32.", flush=True)
+        return False, amp_dtype, amp_dtype_raw, use_grad_scaler
+    return True, amp_dtype, amp_dtype_raw, use_grad_scaler
+
+
+def _amp_autocast(
+    device: torch.device,
+    *,
+    amp_enabled: bool,
+    amp_dtype: torch.dtype,
+) -> ContextManager[object]:
+    if amp_enabled and device.type == "cuda":
+        return torch.autocast(device_type="cuda", dtype=amp_dtype)
+    return nullcontext()
 
 
 def run_level_scores(
@@ -214,6 +315,8 @@ def run_level_scores(
     requested_max_len: int,
     cache_num_sets: int,
     cache_max_len: int,
+    amp_eval_enabled: bool,
+    amp_dtype: torch.dtype,
 ) -> Tuple[np.ndarray, np.ndarray]:
     model.eval()
     y_true: List[str] = []
@@ -235,7 +338,8 @@ def run_level_scores(
             nv = min(int(blob["n_sets"]), requested_num_sets, cache_num_sets)
             if nv <= 0:
                 continue
-            logits = model(x[:nv])
+            with _amp_autocast(device, amp_enabled=amp_eval_enabled, amp_dtype=amp_dtype):
+                logits = model(x[:nv])
             if aggregate == "mean":
                 agg = logits.mean(dim=0)
             elif aggregate == "max":
@@ -307,16 +411,78 @@ def train_epoch(
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    *,
+    split_set_microbatch: bool,
+    amp_enabled: bool,
+    amp_dtype: torch.dtype,
+    scaler: Optional[torch.amp.GradScaler],
 ) -> float:
     model.train()
     total = 0.0
     n = 0
     for batch in tqdm(loader, desc="Train", leave=False):
-        loss = training_loss(model, batch, device)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
-        total += float(loss.item())
+        if split_set_microbatch:
+            first_half = _slice_batch_sets(batch, start=0, end=SET_SPLIT_INDEX)
+            second_half = _slice_batch_sets(batch, start=SET_SPLIT_INDEX, end=10)
+            denom_1 = _count_valid_sets(first_half)
+            denom_2 = _count_valid_sets(second_half)
+            denom = denom_1 + denom_2
+            if denom <= 0:
+                continue
+            optimizer.zero_grad(set_to_none=True)
+            if denom_1 > 0:
+                loss_sum_1, _ = training_loss_sum_and_count(
+                    model,
+                    first_half,
+                    device,
+                    amp_enabled=amp_enabled,
+                    amp_dtype=amp_dtype,
+                )
+                scaled_loss_1 = loss_sum_1 / float(denom)
+                if scaler is not None:
+                    scaler.scale(scaled_loss_1).backward()
+                else:
+                    scaled_loss_1.backward()
+            else:
+                loss_sum_1 = torch.zeros((), device=device)
+            if denom_2 > 0:
+                loss_sum_2, _ = training_loss_sum_and_count(
+                    model,
+                    second_half,
+                    device,
+                    amp_enabled=amp_enabled,
+                    amp_dtype=amp_dtype,
+                )
+                scaled_loss_2 = loss_sum_2 / float(denom)
+                if scaler is not None:
+                    scaler.scale(scaled_loss_2).backward()
+                else:
+                    scaled_loss_2.backward()
+            else:
+                loss_sum_2 = torch.zeros((), device=device)
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            total += float((loss_sum_1 + loss_sum_2).item() / float(denom))
+        else:
+            loss = training_loss(
+                model,
+                batch,
+                device,
+                amp_enabled=amp_enabled,
+                amp_dtype=amp_dtype,
+            )
+            optimizer.zero_grad(set_to_none=True)
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
+            total += float(loss.item())
         n += 1
     return total / max(n, 1)
 
@@ -445,6 +611,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     task = str(merged["task"]).strip()
     model_name = str(merged["model"]).strip()
     num_sets = int(merged["num_sets"])
+    raw_batch_size = merged["batch_size"]
+    _batch_size_cfg, loader_batch_size, split_set_microbatch = _resolve_train_batch_size(
+        raw_batch_size
+    )
     max_len = model_max_length(model_name, merged.get("max_length"))
     head_mode = str(merged["head_pooling_mode"]).strip()
     aggregate = str(merged["run_logits_aggregate"]).strip().lower()
@@ -467,6 +637,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"Missing run tensors directory: {run_tensors_root}. "
             "Run: python scripts/build_run_tensors.py"
         )
+    if split_set_microbatch and num_sets != 10:
+        raise SystemExit(
+            "train_hyenadna.batch_size=0.5 requires train_hyenadna.num_sets=10 "
+            "to split each run into sets 0-4 and 5-9."
+        )
 
     run_task_df = build_run_task_table(task, config_path=defaults_path)
     enc = LabelEncoder()
@@ -484,13 +659,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pos_class_index = 1
     neg_label = class_names[neg_class_index]
     pos_label = class_names[pos_class_index]
-    print(
-        f"\nHyenaDNA train | task={task} model={model_name} | "
-        f"positive_class={pos_label!r} (index {pos_class_index}) | "
-        f"run_tensors={run_tensors_root}",
-        flush=True,
-    )
-
     all_records = _build_records(
         run_task_df,
         run_tensors_root,
@@ -521,6 +689,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_s)
+    amp_enabled, amp_dtype, amp_dtype_name, amp_use_grad_scaler = _resolve_amp_config(
+        merged, device
+    )
+    amp_eval_enabled = amp_enabled
+    print(
+        f"\nHyenaDNA train | task={task} model={model_name} | "
+        f"positive_class={pos_label!r} (index {pos_class_index}) | "
+        f"precision={'amp(' + amp_dtype_name + ')' if amp_enabled else 'fp32'}",
+        flush=True,
+    )
 
     train_ds = RunTensorDataset(
         train_entries,
@@ -531,7 +709,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     train_loader = DataLoader(
         train_ds,
-        batch_size=int(merged["batch_size"]),
+        batch_size=loader_batch_size,
         shuffle=True,
         num_workers=int(merged["num_workers"]),
         collate_fn=collate_batch,
@@ -562,6 +740,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         lr=float(merged["learning_rate"]),
         weight_decay=float(merged["weight_decay"]),
     )
+    scaler: Optional[torch.amp.GradScaler] = None
+    if amp_enabled and amp_use_grad_scaler:
+        scaler = torch.amp.GradScaler("cuda")
 
     epochs = int(merged["epochs"])
     last_loss = 0.0
@@ -583,7 +764,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     for ep in range(1, epochs + 1):
         print(f"\n--- Epoch {ep}/{epochs} ---", flush=True)
-        last_loss = train_epoch(model, train_loader, opt, device)
+        last_loss = train_epoch(
+            model,
+            train_loader,
+            opt,
+            device,
+            split_set_microbatch=split_set_microbatch,
+            amp_enabled=amp_enabled,
+            amp_dtype=amp_dtype,
+            scaler=scaler,
+        )
         val_true, val_score = run_level_scores(
             model,
             val_entries,
@@ -594,6 +784,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             requested_max_len=max_len,
             cache_num_sets=cache_num_sets,
             cache_max_len=cache_max_len,
+            amp_eval_enabled=amp_eval_enabled,
+            amp_dtype=amp_dtype,
         )
         val_f1 = run_level_weighted_f1_from_scores(
             val_true,
@@ -612,6 +804,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 requested_max_len=max_len,
                 cache_num_sets=cache_num_sets,
                 cache_max_len=cache_max_len,
+                amp_eval_enabled=amp_eval_enabled,
+                amp_dtype=amp_dtype,
             )
         )
         hold_auc = float("nan")
@@ -627,6 +821,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     requested_max_len=max_len,
                     cache_num_sets=cache_num_sets,
                     cache_max_len=cache_max_len,
+                    amp_eval_enabled=amp_eval_enabled,
+                    amp_dtype=amp_dtype,
                 )
             )
         epoch_log.append(
@@ -667,6 +863,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             requested_max_len=max_len,
             cache_num_sets=cache_num_sets,
             cache_max_len=cache_max_len,
+            amp_eval_enabled=amp_eval_enabled,
+            amp_dtype=amp_dtype,
         )
         hold_score_best = np.asarray([], dtype=np.float64)
         if holdout_entries:
@@ -680,6 +878,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 requested_max_len=max_len,
                 cache_num_sets=cache_num_sets,
                 cache_max_len=cache_max_len,
+                amp_eval_enabled=amp_eval_enabled,
+                amp_dtype=amp_dtype,
             )
         test_pred_rows = run_level_prediction_rows(
             test_entries,
@@ -714,14 +914,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             best_epoch=best_epoch,
             best_val_f1_weighted=best_val_f1,
         )
-        print(f"\nWrote results JSON: {results_path}", flush=True)
-        if training_log_path is not None:
-            print(f"Wrote training log JSON: {training_log_path}", flush=True)
-        print(f"Wrote test predictions CSV: {test_pred_path}", flush=True)
-        print(f"Wrote holdout predictions CSV: {holdout_pred_path}", flush=True)
         print(
             f"Best epoch by val_f1_weighted: {best_epoch} "
-            f"(val_f1_weighted={best_val_f1:.6f})",
+            f"(val_f1_weighted={best_val_f1:.6f})\n",
             flush=True,
         )
 

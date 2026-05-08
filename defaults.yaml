@@ -130,8 +130,14 @@ train_hyenadna:
   # If true, only train the classification head.
   freeze_backbone: false
   # Optimization
-  epochs: 3
+  epochs: 1
+  # Batch size accepts a positive integer, or exactly 0.5 to train one run at a time
+  # with two micro-passes over set slices [0:5] and [5:10] (requires num_sets: 10).
   batch_size: 8
+  # Optional mixed precision on CUDA. When false, training runs in float32.
+  amp: true
+  # Low-precision dtype for AMP autocast: float16 or bfloat16.
+  amp_dtype: float16
   learning_rate: 1.0e-4
   weight_decay: 0.01
   num_workers: 0
