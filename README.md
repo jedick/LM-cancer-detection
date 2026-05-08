@@ -42,8 +42,8 @@ TLDR:
 1. Install script dependencies from the repository root: `pip install -r requirements.txt`.
 2. Run `make fit_tetramer EXPT=0` to generate results files in `results/tetramer`.
 3. Run `make fit_uc_cap FEAT=0 EXPT=0` to generate results files in `results/uc_cap`.
-4. Run `make run_tensors CACHE=<n>` for 1..N cache rows in `experiments.yaml`.
-5. Run `make train_hyenadna CACHE=0 EXPT=0` to generate results files in `results/hyenadna`.
+4. Run `make run_tensors` to build `outputs/run_tensors/*.pt` from `defaults.yaml`.
+5. Run `make train_hyenadna EXPT=0` to generate all HyenaDNA experiment results in `results/hyenadna`.
 6. Use `helpers/table*.py` scripts to make manuscript tables from the results files.
 
 ---
@@ -141,16 +141,16 @@ Source files:
 - To run the inference example: `cd hyenadna; python -c 'import inference_example as ex; ex.inference_single()'`
 
 Project execution:
-- Build cached tensors: `make run_tensors CACHE=<n>` for each `run_tensors` row index in `experiments.yaml`.
-- Train/evaluate HyenaDNA: `make train_hyenadna` uses default `CACHE=1` unless set.
-- Experiments: `make train_hyenadna CACHE=0 EXPT=0` runs every allowed cache×experiment pair.
+- Build cached tensors: `make run_tensors` builds a single run-level tensor cache from `defaults.yaml` `run_tensors`.
+- Train/evaluate HyenaDNA: `make train_hyenadna` uses defaults from `defaults.yaml`.
+- Experiments: `make train_hyenadna EXPT=0` runs every `train_hyenadna` experiment in `experiments.yaml`.
 
 Inputs/outputs:
 - Run tensors:
-  - Inputs: FASTA files, `run_tensors` configuration from `defaults.yaml`, and per-cache overrides from `experiments.yaml`.
-  - Outputs: one run tensor file per run at `outputs/run_tensors/<cache>/<Run>.pt`.
+  - Inputs: FASTA files and `run_tensors` configuration from `defaults.yaml`.
+  - Outputs: one run tensor file per run at `outputs/run_tensors/<Run>.pt`.
 - HyenaDNA classifier:
   - Inputs: cached run tensors, run labels/splits from `scripts/shared_utilities.py`, and pretrained weights under `checkpoints/<model>/` (or download on demand).
   - Outputs:
       - Default `make train_hyenadna` writes `results/scratch/train_hyenadna_<task>_<timestamp>.json`.
-      - Experiment runs (`make train_hyenadna CACHE=n EXPT=N`) write under `results/hyenadna/<n>/{name}.json`.
+      - Experiment runs (`make train_hyenadna EXPT=N`) write under `results/hyenadna/{name}.json`.

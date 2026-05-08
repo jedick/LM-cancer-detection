@@ -2,11 +2,12 @@
 """
 Fine-tune HyenaDNA with the classification head (hyenadna/standalone_hyenadna.py).
 
-Uses a pre-built feature-only per-run tensor cache under paths.run_tensors_dir/<cache>/ from
+Uses a pre-built feature-only per-run tensor cache under paths.run_tensors_dir/ from
 scripts/build_run_tensors.py, joins labels/splits from shared metadata at runtime, and reports
 run-level ROC-AUC on the test and holdout splits (one score per Run).
 
-Config: defaults.yaml (train_hyenadna + paths) with optional experiments.yaml (--expt, --cache).
+Config: defaults.yaml (train_hyenadna + run_tensors + paths) with optional
+experiments.yaml train_hyenadna overrides (--expt).
 """
 
 from __future__ import annotations
@@ -38,10 +39,6 @@ from hyenadna_fasta_data import (
     merge_train_hyenadna_config,
     model_max_length,
     resolve_repo_path,
-)
-from hyenadna_tensor_cache import (
-    base_run_tensors_root,
-    merged_build_run_tensors_for_cache,
 )
 
 HEAD_MODES = ("last", "first", "pool", "sum")
@@ -160,8 +157,8 @@ class RunTensorDataset(Dataset):
         start = self.cache_max_len - self.requested_max_len
         if start < 0:
             raise SystemExit(
-                "train_hyenadna.max_length exceeds build_run_tensors.max_length. "
-                "Increase build_run_tensors.max_length and rebuild run tensors."
+                "train_hyenadna.max_length exceeds run_tensors.max_length. "
+                "Increase run_tensors.max_length and rebuild run tensors."
             )
         input_ids = blob["input_ids"][: self.requested_num_sets, start:self.cache_max_len]
         attention_mask = blob["attention_mask"][: self.requested_num_sets, start:self.cache_max_len]
@@ -231,8 +228,8 @@ def run_level_scores(
             start = cache_max_len - requested_max_len
             if start < 0:
                 raise SystemExit(
-                    "train_hyenadna.max_length exceeds build_run_tensors.max_length. "
-                    "Increase build_run_tensors.max_length and rebuild run tensors."
+                    "train_hyenadna.max_length exceeds run_tensors.max_length. "
+                    "Increase run_tensors.max_length and rebuild run tensors."
                 )
             x = blob["input_ids"][:requested_num_sets, start:cache_max_len].to(device)
             nv = min(int(blob["n_sets"]), requested_num_sets, cache_num_sets)
@@ -327,16 +324,6 @@ def train_epoch(
 def _parse_argv(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--cache",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "1-based experiments.yaml run_tensors index; tensors load from paths.run_tensors_dir/N/. "
-            "Required."
-        ),
-    )
-    parser.add_argument(
         "--expt",
         type=int,
         default=None,
@@ -357,8 +344,6 @@ def _parse_argv(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.expt is not None and args.expt < 0:
         raise SystemExit("--expt must be >= 0.")
-    if args.cache is not None and args.cache < 1:
-        raise SystemExit("--cache must be >= 1.")
     return args
 
 
@@ -427,18 +412,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     defaults_path = repo_root / "defaults.yaml"
     experiments_path = repo_root / "experiments.yaml"
 
-    cache_cli = cli.cache
-    if cache_cli is None:
-        raise SystemExit("Pass --cache <n> (1-based run_tensors index under paths.run_tensors_dir).")
-    cache_n = int(cache_cli)
-    if cache_n < 1:
-        raise SystemExit("--cache must be >= 1.")
-
     merged, _exp_name, _tpl = merge_train_hyenadna_config(
         defaults_path,
         experiments_path,
         expt=expt,
-        cache_1based=cache_n,
     )
 
     if hasattr(cli, "results_json"):
@@ -448,15 +425,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         else:
             merged = {**merged, "results_json": rj}
 
-    build_eff = merged_build_run_tensors_for_cache(
-        defaults_path,
-        experiments_path,
-        cache_1based=cache_n,
+    defaults_cfg = yaml.safe_load(defaults_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(defaults_cfg, dict):
+        raise SystemExit(f"{defaults_path} must contain a YAML mapping.")
+    paths_cfg = defaults_cfg.get("paths")
+    if not isinstance(paths_cfg, dict):
+        raise SystemExit(f"{defaults_path} must define paths as a mapping.")
+    run_tensors_cfg = defaults_cfg.get("run_tensors")
+    if not isinstance(run_tensors_cfg, dict):
+        raise SystemExit(f"{defaults_path} must define run_tensors as a mapping.")
+    run_tensors_root = resolve_repo_path(
+        repo_root,
+        str(paths_cfg.get("run_tensors_dir", "outputs/run_tensors")).strip(),
     )
-    run_tensors_root = base_run_tensors_root(repo_root, defaults_path) / str(cache_n)
 
-    cache_num_sets = int(build_eff["num_sets"])
-    cache_max_len = int(build_eff["max_length"])
+    cache_num_sets = int(run_tensors_cfg["num_sets"])
+    cache_max_len = int(run_tensors_cfg["max_length"])
 
     task = str(merged["task"]).strip()
     model_name = str(merged["model"]).strip()
@@ -470,12 +454,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit(f"run_logits_aggregate must be one of {AGGREGATES}; got {aggregate!r}.")
     if num_sets > cache_num_sets:
         raise SystemExit(
-            f"train_hyenadna.num_sets ({num_sets}) exceeds build_run_tensors.num_sets "
+            f"train_hyenadna.num_sets ({num_sets}) exceeds run_tensors.num_sets "
             f"({cache_num_sets}). Rebuild run tensors with a larger cache."
         )
     if max_len > cache_max_len:
         raise SystemExit(
-            f"Resolved max_length ({max_len}) exceeds build_run_tensors.max_length "
+            f"Resolved max_length ({max_len}) exceeds run_tensors.max_length "
             f"({cache_max_len}). Rebuild run tensors with a larger cache."
         )
     if not run_tensors_root.is_dir():
@@ -503,7 +487,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(
         f"\nHyenaDNA train | task={task} model={model_name} | "
         f"positive_class={pos_label!r} (index {pos_class_index}) | "
-        f"cache={run_tensors_root}",
+        f"run_tensors={run_tensors_root}",
         flush=True,
     )
 
@@ -718,10 +702,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             results_path,
             merged=merged,
             cache_info={
-                "cache_index": int(cache_n),
                 "dir": str(run_tensors_root),
-                "build_run_tensors_num_sets": cache_num_sets,
-                "build_run_tensors_max_length": cache_max_len,
+                "run_tensors_num_sets": cache_num_sets,
+                "run_tensors_max_length": cache_max_len,
                 "train_num_sets": num_sets,
                 "train_max_length": max_len,
                 "n_cached_runs": len(all_records),

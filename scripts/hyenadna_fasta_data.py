@@ -43,12 +43,8 @@ def merge_train_hyenadna_config(
     experiments_path: Path,
     *,
     expt: int,
-    cache_1based: Optional[int] = None,
 ) -> Tuple[Dict[str, object], Optional[str], Optional[str]]:
     """Return merged train_hyenadna config, optional experiment name, results_json template.
-
-    When ``expt >= 1`` and experiments define ``results_json_template``, ``cache_1based`` must be
-    set so ``{cache}`` (and ``{name}``) can be substituted.
     """
     defaults = load_train_hyenadna_section(defaults_path)
     experiment_name: Optional[str] = None
@@ -94,14 +90,8 @@ def merge_train_hyenadna_config(
         and template
         and defaults.get("results_json") in (None, "null")
     ):
-        if cache_1based is None:
-            raise SystemExit(
-                "Experiment metrics paths require --cache <n> (substituted into "
-                "train_hyenadna.results_json_template)."
-            )
         defaults["results_json"] = template.format(
             name=experiment_name,
-            cache=int(cache_1based),
         )
 
     return defaults, experiment_name, template

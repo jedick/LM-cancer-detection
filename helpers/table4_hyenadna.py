@@ -71,10 +71,10 @@ def _extract_lengths_and_task(path: Path, data: dict) -> Tuple[int, int, str]:
         raise SystemExit(f"{path}: expected config.task in {TASKS}, got {task!r}")
 
     cache_blob = data.get("data", {}).get("cache", {})
-    cache_max_len = cache_blob.get("build_run_tensors_max_length")
+    cache_max_len = cache_blob.get("run_tensors_max_length")
     if cache_max_len is None:
         raise SystemExit(
-            f"{path}: missing data.cache.build_run_tensors_max_length "
+            f"{path}: missing data.cache.run_tensors_max_length "
             "(required to map table rows)."
         )
 

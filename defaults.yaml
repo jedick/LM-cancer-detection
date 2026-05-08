@@ -14,7 +14,7 @@ paths:
   # Run-level tetramer frequency table (input for scripts/fit_classifier.py --tetramer).
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap
-  # Feature-only per-run HyenaDNA tensors from scripts/build_run_tensors.py (always outputs/run_tensors/<n>/).
+  # Feature-only per-run HyenaDNA tensors from scripts/build_run_tensors.py.
   run_tensors_dir: outputs/run_tensors
 
 # Canonical Run -> train/val/test/holdout assignment (scripts/shared_utilities.py).
@@ -101,10 +101,11 @@ run_uc_cap_pipeline:
     chunk_size: 20000
 
 # Feature-only run tensor cache (scripts/build_run_tensors.py).
-# One .pt file per run under paths.run_tensors_dir/<n>/ (experiments.yaml run_tensors row n).
-build_run_tensors:
-  num_sets: 5
-  max_length: 1024
+# One .pt file per run under paths.run_tensors_dir/.
+run_tensors:
+  seq_offset: 0
+  num_sets: 10
+  max_length: 16384
   max_workers: 4
 
 # HyenaDNA fine-tuning (scripts/train_hyenadna.py).

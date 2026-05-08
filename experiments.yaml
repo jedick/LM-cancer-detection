@@ -52,42 +52,118 @@ run_uc_cap_pipeline:
   - { n_uc: 1000, n_clusters: 5000, n_cap: 10000 }
   - { n_uc: 2000, n_clusters: 5000, n_cap: 10000 }
   
-run_tensors:
-  - { max_length: 1024 }
-  - { max_length: 2048 }
-  - { max_length: 4096 }
-
 train_hyenadna:
-  results_json_template: results/hyenadna/{cache}/{name}.json
+  results_json_template: results/hyenadna/{name}.json
   experiments:
-    - name: cancer_diagnosis_1k
+    - name: cancer_diagnosis_1k_5sets
       overrides:
         task: cancer_diagnosis
         # Tradeoff max_length and batch_size to fit in 16GB VRAM
         max_length: 1024
         batch_size: 24
-    - name: cancer_type_1k
+    - name: cancer_type_1k_5sets
       overrides:
         task: cancer_type
         max_length: 1024
         batch_size: 24
-    - name: cancer_diagnosis_2k
+    - name: cancer_diagnosis_2k_5sets
       overrides:
         task: cancer_diagnosis
         max_length: 2048
         batch_size: 12
-    - name: cancer_type_2k
+    - name: cancer_type_2k_5sets
       overrides:
         task: cancer_type
         max_length: 2048
         batch_size: 12
-    - name: cancer_diagnosis_4k
+    - name: cancer_diagnosis_4k_5sets
       overrides:
         task: cancer_diagnosis
         max_length: 4096
         batch_size: 6
-    - name: cancer_type_4k
+    - name: cancer_type_4k_5sets
       overrides:
         task: cancer_type
         max_length: 4096
         batch_size: 6
+    - name: cancer_diagnosis_8k_5sets
+      overrides:
+        task: cancer_diagnosis
+        max_length: 8192
+        batch_size: 3
+    - name: cancer_type_8k_5sets
+      overrides:
+        task: cancer_type
+        max_length: 8192
+        batch_size: 3
+    - name: cancer_diagnosis_16k_5sets
+      overrides:
+        task: cancer_diagnosis
+        max_length: 16384
+        batch_size: 1
+    - name: cancer_type_16k_5sets
+      overrides:
+        task: cancer_type
+        max_length: 16384
+        batch_size: 1
+    # For experiments with 10 sets, halve the batch size to fit into 16Gb RAM
+    - name: cancer_diagnosis_1k_10sets
+      overrides:
+        task: cancer_diagnosis
+        num_sets: 10
+        max_length: 1024
+        batch_size: 12
+    - name: cancer_type_1k_10sets
+      overrides:
+        task: cancer_type
+        num_sets: 10
+        max_length: 1024
+        batch_size: 12
+    - name: cancer_diagnosis_2k_10sets
+      overrides:
+        task: cancer_diagnosis
+        num_sets: 10
+        max_length: 2048
+        batch_size: 6
+    - name: cancer_type_2k_10sets
+      overrides:
+        task: cancer_type
+        num_sets: 10
+        max_length: 2048
+        batch_size: 6
+    - name: cancer_diagnosis_4k_10sets
+      overrides:
+        task: cancer_diagnosis
+        num_sets: 10
+        max_length: 4096
+        batch_size: 3
+    - name: cancer_type_4k_10sets
+      overrides:
+        task: cancer_type
+        num_sets: 10
+        max_length: 4096
+        batch_size: 3
+    - name: cancer_diagnosis_8k_10sets
+      overrides:
+        task: cancer_diagnosis
+        num_sets: 10
+        max_length: 8192
+        batch_size: 1
+    - name: cancer_type_8k_10sets
+      overrides:
+        task: cancer_type
+        num_sets: 10
+        max_length: 8192
+        batch_size: 1
+    - name: cancer_diagnosis_16k_10sets
+      overrides:
+        task: cancer_diagnosis
+        num_sets: 10
+        max_length: 16384
+        batch_size: 0.5
+    - name: cancer_type_16k_10sets
+      overrides:
+        task: cancer_type
+        num_sets: 10
+        max_length: 16384
+        batch_size: 0.5

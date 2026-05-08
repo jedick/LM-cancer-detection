@@ -5,8 +5,7 @@ Build a feature-only HyenaDNA tensor cache per sequencing run (FASTA -> .pt).
 This cache is task-agnostic: each run file stores token tensors only, and labels/splits
 are joined later by train_hyenadna.py via shared metadata utilities.
 
-Tensor files always live under paths.run_tensors_dir/<1-based cache index>/ (see experiments.yaml
-run_tensors rows merged over defaults.yaml build_run_tensors).
+Tensor files live under paths.run_tensors_dir as <Run>.pt files.
 """
 
 from __future__ import annotations
@@ -24,14 +23,10 @@ from hyenadna_fasta_data import (  # noqa: E402
     fasta_path_for_run,
     iter_fasta_sequences,
     make_character_tokenizer,
+    resolve_repo_path,
     run_to_tensors,
 )
 from shared_utilities import build_run_table
-from hyenadna_tensor_cache import (
-    base_run_tensors_root,
-    merged_build_run_tensors_for_cache,
-    run_tensors_rows,
-)
 
 
 def _load_defaults(defaults_path: Path) -> Dict[str, Any]:
@@ -50,6 +45,7 @@ def _build_one_run_tensor(
     study_name: str,
     num_sets: int,
     max_length: int,
+    seq_offset: int,
     force: bool,
 ) -> Tuple[str, str, str]:
     repo_root = Path(repo_root_s)
@@ -64,6 +60,8 @@ def _build_one_run_tensor(
 
     tokenizer = make_character_tokenizer(max_length)
     sequences = list(iter_fasta_sequences(fasta_gz))
+    if seq_offset > 0:
+        sequences = sequences[seq_offset:]
     input_ids, attention_mask, n_valid = run_to_tensors(
         sequences,
         tokenizer=tokenizer,
@@ -84,12 +82,10 @@ def _build_one_run_tensor(
     return ("written", run, "")
 
 
-def _build_cache_index(
+def _build_tensor_cache(
     *,
     repo_root: Path,
     defaults_path: Path,
-    experiments_path: Path,
-    cache_index: int,
     force: bool,
 ) -> None:
     cfg = _load_defaults(defaults_path)
@@ -98,24 +94,26 @@ def _build_cache_index(
         raise SystemExit(f"{defaults_path} must define paths as a mapping.")
 
     fasta_dir_key = str(paths_cfg["fasta_dir"]).strip()
-    build_cfg = merged_build_run_tensors_for_cache(
-        defaults_path,
-        experiments_path,
-        cache_1based=cache_index,
-    )
-    run_tensors_root = base_run_tensors_root(repo_root, defaults_path) / str(cache_index)
+    run_tensors_cfg = cfg.get("run_tensors")
+    if not isinstance(run_tensors_cfg, dict):
+        raise SystemExit(f"{defaults_path} must define run_tensors as a mapping.")
+    run_tensors_key = str(paths_cfg.get("run_tensors_dir", "outputs/run_tensors")).strip()
+    run_tensors_root = resolve_repo_path(repo_root, run_tensors_key)
 
     run_tensors_root.mkdir(parents=True, exist_ok=True)
 
-    num_sets = int(build_cfg["num_sets"])
-    max_length = int(build_cfg["max_length"])
-    max_workers = int(build_cfg.get("max_workers", 1))
+    num_sets = int(run_tensors_cfg["num_sets"])
+    max_length = int(run_tensors_cfg["max_length"])
+    seq_offset = int(run_tensors_cfg.get("seq_offset", 0))
+    max_workers = int(run_tensors_cfg.get("max_workers", 1))
     if num_sets <= 0:
-        raise SystemExit("build_run_tensors.num_sets must be > 0.")
+        raise SystemExit("run_tensors.num_sets must be > 0.")
     if max_length <= 0:
-        raise SystemExit("build_run_tensors.max_length must be > 0.")
+        raise SystemExit("run_tensors.max_length must be > 0.")
+    if seq_offset < 0:
+        raise SystemExit("run_tensors.seq_offset must be >= 0.")
     if max_workers <= 0:
-        raise SystemExit("build_run_tensors.max_workers must be >= 1.")
+        raise SystemExit("run_tensors.max_workers must be >= 1.")
 
     run_df = build_run_table(config_path=defaults_path)
     runs_frame = run_df[["Run", "study_name"]].drop_duplicates(subset=["Run"])
@@ -125,7 +123,8 @@ def _build_cache_index(
     n_total = len(runs_frame)
     print(
         f"\nBuilding run tensors ({n_total} runs) -> {run_tensors_root} "
-        f"(cache={cache_index}, num_sets={num_sets}, max_length={max_length}, "
+        f"(num_sets={num_sets}, max_length={max_length}, "
+        f"seq_offset={seq_offset}, "
         f"max_workers={max_workers})",
         flush=True,
     )
@@ -140,6 +139,7 @@ def _build_cache_index(
         "run_tensors_root_s": str(run_tensors_root),
         "num_sets": num_sets,
         "max_length": max_length,
+        "seq_offset": seq_offset,
         "force": force,
     }
 
@@ -185,36 +185,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="Rebuild existing run tensor files.",
     )
-    parser.add_argument(
-        "--cache",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "1-based experiments.yaml run_tensors row index (writes under paths.run_tensors_dir/N/). "
-            "Required."
-        ),
-    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = Path(__file__).resolve().parent.parent
     defaults_path = repo_root / "defaults.yaml"
-    experiments_path = repo_root / "experiments.yaml"
 
-    rows = run_tensors_rows(experiments_path)
-    cache_arg = args.cache
-    if cache_arg is None:
-        raise SystemExit("Pass --cache <n> (1-based index matching experiments.yaml run_tensors).")
-    if cache_arg < 1 or cache_arg > len(rows):
-        raise SystemExit(
-            f"--cache {cache_arg} out of range; experiments.yaml has {len(rows)} run_tensors row(s)."
-        )
-
-    _build_cache_index(
+    _build_tensor_cache(
         repo_root=repo_root,
         defaults_path=defaults_path,
-        experiments_path=experiments_path,
-        cache_index=cache_arg,
         force=bool(args.force),
     )
     return 0
