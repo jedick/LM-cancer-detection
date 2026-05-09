@@ -91,21 +91,25 @@ train_hyenadna:
         task: cancer_diagnosis
         max_length: 8192
         batch_size: 5
+        amp_dtype: bfloat16
     - name: cancer_type_8k_5sets
       overrides:
         task: cancer_type
         max_length: 8192
         batch_size: 5
+        amp_dtype: bfloat16
     - name: cancer_diagnosis_16k_5sets
       overrides:
         task: cancer_diagnosis
         max_length: 16384
         batch_size: 2
+        amp_dtype: bfloat16
     - name: cancer_type_16k_5sets
       overrides:
         task: cancer_type
         max_length: 16384
         batch_size: 2
+        amp_dtype: bfloat16
     # For experiments with 10 sets, use reduced batch sizes to fit 16GB VRAM.
     - name: cancer_diagnosis_1k_10sets
       overrides:
@@ -149,21 +153,25 @@ train_hyenadna:
         num_sets: 10
         max_length: 8192
         batch_size: 2
+        amp_dtype: bfloat16
     - name: cancer_type_8k_10sets
       overrides:
         task: cancer_type
         num_sets: 10
         max_length: 8192
         batch_size: 2
+        amp_dtype: bfloat16
     - name: cancer_diagnosis_16k_10sets
       overrides:
         task: cancer_diagnosis
         num_sets: 10
         max_length: 16384
         batch_size: 1
+        amp_dtype: bfloat16
     - name: cancer_type_16k_10sets
       overrides:
         task: cancer_type
         num_sets: 10
         max_length: 16384
         batch_size: 1
+        amp_dtype: bfloat16
