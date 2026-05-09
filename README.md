@@ -38,53 +38,44 @@ Samples labeled as `benign` and non-fecal samples in some studies are excluded f
 
 ## Data analysis pipeline
 
-TLDR:
-1. Install script dependencies from the repository root: `pip install -r requirements.txt`.
-2. Run `make fit_tetramer EXPT=0` to generate results files in `results/tetramer`.
-3. Run `make fit_uc_cap FEAT=0 EXPT=0` to generate results files in `results/uc_cap`.
-4. Run `make run_tensors` to build `outputs/run_tensors/*.pt` from `defaults.yaml`.
-5. Run `make train_hyenadna EXPT=0` to generate all HyenaDNA experiment results in `results/hyenadna`.
-6. Use `helpers/table*.py` scripts to make manuscript tables from the results files.
-
----
-
 This project is organized as a Makefile-driven analysis pipeline. Paths and default
 parameters are stored in `defaults.yaml`, and scripts load those defaults
-directly. `Makefile` provides convenience targets for the common pipeline steps.
+directly. `Makefile` provides convenience targets for the common pipeline steps, listed below.
+
+Start with `make download_data` to download the 16S rRNA gene sequence data from SRA and save the gz files under `fasta/`.
+See the list for a quick overview of the steps and read below for details.
+
+1. Installation: `pip install -r requirements.txt` installs dependencies including the local `hyenadna` package in editable mode.
+2. Download data: `make download_data` downloads 16S sequences from SRA (about 9 GB on disk).
+3. Tetramer counts: `make tetramer_frequencies` counts tetramers in sequences and gets run-level means (several hours / about 5 GB on disk).
+4. Tetramer classifier: `make -j4 fit_tetramer EXPT=0` generates results files in `results/tetramer` (about 6 min).
+5. Sequence cache: `make sequence_cache` generates a Parquet file with tetramer counts for the first 10000 sequences in each run.
+6. UC/CAP pipeline: `make run_uc_cap FEAT=0` generates cluster abundance profiles in `outputs/uc_cap` (about 40 min / 100GB RAM).
+7. UC/CAP classifier: `make -j4 fit_uc_cap FEAT=0 EXPT=0` generates results files in `results/uc_cap` (about 2 hr).
+8. HyenaDNA run tensors: `make run_tensors` builds `outputs/run_tensors/*.pt` from FASTA files (about 15 min).
+9. HyenaDNA classifier: `make train_hyenadna EXPT=0` generate HyenaDNA experiment results in `results/hyenadna` (about 16 hr).
+10. Use `helpers/table*.py` and `helpers/figure*py` scripts to make manuscript tables and figures from the results files.
+
+Notes:
+
+- `EXPT=0` means to run all experiments for a target listed in `experiments.yaml`.
+  Can add `-j` for parallel execution of non-GPU tasks.
+- `FEAT=0` is used to build all feature sets for the UC/CAP pipeline.
+  Use e.g. `FEAT=1` or `EXPT=1` for a single feature set or experiment.
+- Steps 5 and 6 (sequence cache and UC/CAP pipeline) are the most memory-hungry steps.
+- Use the Cursor skill `/manuscript-tables 1` (or 3, 4) to execute a table helper and insert the HTML table in `manuscript.md`.
+
+If you want to see why Make would rebuild a target (including recursive prerequisite chains), use `make explain-<target>`.
+For example, run `make explain-run_uc_cap FEAT=0`; replace the part after `explain-` with any Make target name.
+
+## Details
+
+### Datasets
+
 The `datasets.csv` file identifies development and holdout studies in the
 `partition` column. Train/val/test splits are taken only from development studies,
 and metrics are calculated separately for test (development) and holdout studies.
-Split proportions are configured in `defaults.yaml` under `shared_splits`
-(`train_fraction`, `val_fraction`, `test_fraction`; currently 0.70/0.15/0.15).
-
-Start with `make download_data` to download the 16S rRNA gene sequence data from SRA and save the gz files under `fasta/`.
-See the table for an overview of all the steps and read below for details.
-
-| Step | Script | Target |
-|-----|--------|--------|
-| 1. Download | download_sra_data.py | `make download_data` |
-| 2. Tetramer counts | calculate_tetramer_frequencies.py | `make tetramer_frequencies` |
-| 3. Tetramer classifier | fit_classifier.py --tetramer | `make fit_tetramer` |
-| 4. Sequence cache | build_uc_cap_sequence_cache.py | `make sequence_cache` |
-| 5. UC/CAP pipeline | run_uc_cap_pipeline.py | `make run_uc_cap` |
-| 6. UC/CAP classifier | fit_classifier.py --uc_cap | `make fit_uc_cap` |
-| 7. HyenaDNA run tensors | build_run_tensors.py | `make run_tensors` |
-| 8. HyenaDNA classifier | train_hyenadna.py | `make train_hyenadna` |
-
-- Append `EXPT=1` to the make commands in Steps 5--8 to run a single experiment
-- Append `EXPT=0` to run all experiments.
-  This make target supports incremental rebuilds and `-j` for parallel execution (for example, `make -j4 fit_tetramer EXPT=0`).
-
-If you want to see why Make would rebuild a target (including recursive prerequisite chains), use `make explain-<target>`.
-For example, run `make explain-run_uc_cap`; replace the part after `explain-` with any Make target name.
-
-<details>
-<summary>Inputs/Outputs by step</summary>
-
-
-</details>
-
-## Details
+Split proportions are configured in `defaults.yaml (currently 0.70/0.15/0.15 for train/val/test).
 
 ### Download data
 

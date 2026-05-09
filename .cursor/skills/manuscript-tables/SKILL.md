@@ -1,10 +1,9 @@
 ---
 name: manuscript-tables
 description: >-
-  Refreshes Table 1, 2, 3, or 4 in manuscript.md from classifier JSON.
+  Refreshes Table 1, 3, or 4 in manuscript.md from classifier JSON.
   User picks the table with a digit after the skill (e.g. /manuscript-tables 1):
-  1 = tetramer (table1_tetramer.py), 2 = UC/CAP grid test AUC
-  (table2_uc_cap.py), 3 = UC/CAP triple test+holdout
+  1 = tetramer (table1_tetramer.py), 3 = UC/CAP selected triple
   (table3_uc_cap.py), 4 = HyenaDNA cache/model grid (table4_hyenadna.py).
   Replace HTML only between the matching
   <!-- classifier-table-N --> markers.
@@ -14,16 +13,15 @@ description: >-
 
 ## How to invoke
 
-The user selects **one** table with a digit **1**, **2**, **3**, or **4** after the skill (for example `/manuscript-tables 1`, `/manuscript-tables 2`, or “manuscript-tables **4**”). Follow **only** the matching section below for that run. Do not refresh other tables unless the user asks.
+The user selects **one** table with a digit **1**, **3**, or **4** after the skill (for example `/manuscript-tables 1`, `/manuscript-tables 3`, or “manuscript-tables **4**”). Follow **only** the matching section below for that run. Do not refresh other tables unless the user asks.
 
 | Digit | Table | Command | HTML markers in `manuscript.md` |
 | ---: | --- | --- | --- |
 | **1** | Tetramer classifiers | `python helpers/table1_tetramer.py` | `<!-- classifier-table-1 -->` … `<!-- /classifier-table-1 -->` |
-| **2** | UC/CAP grid (test AUC only) | `python helpers/table2_uc_cap.py` | `<!-- classifier-table-2 -->` … `<!-- /classifier-table-2 -->` |
 | **3** | UC/CAP selected triple (test + holdout) | `python helpers/table3_uc_cap.py` | `<!-- classifier-table-3 -->` … `<!-- /classifier-table-3 -->` |
 | **4** | HyenaDNA cache/model grid (test + holdout) | `python helpers/table4_hyenadna.py` | `<!-- classifier-table-4 -->` … `<!-- /classifier-table-4 -->` |
 
-If no digit is given, ask which table (1–4) to refresh, or whether to run all four in order (1 then 2 then 3 then 4).
+If no digit is given, ask which table (1, 3, or 4) to refresh, or whether to run all three in order (1 then 3 then 4).
 
 All commands assume the **repository root** as the current working directory.
 
@@ -69,31 +67,11 @@ Keep **Table 1** in `manuscript.md` in sync with **eight JSON files** under `res
 
 ---
 
-# Manuscript Table 2 (UC/CAP grid, test AUC only)
-
-## Goal
-
-Sync **Table 2** with `results/uc_cap/<feat>/cancer_{diagnosis,type}_{knn,svm,random_forest}.json` for every `run_uc_cap_pipeline` row (after defaults merge), same order as `FEAT=1..N`.
-
-## Steps
-
-1. From the repository root:
-
-   ```bash
-   python helpers/table2_uc_cap.py
-   ```
-
-   Optional: `--uc-cap-dir`, `--decimals`.
-
-2. Replace lines between `<!-- classifier-table-2 -->` and `<!-- /classifier-table-2 -->` in `manuscript.md` with stdout.
-
----
-
 # Manuscript Table 3 (selected UC/CAP triple, test + holdout)
 
 ## Goal
 
-Sync **Table 3** with KNN, SVM, and random forest JSON for one feature triple. Defaults match the manuscript prose: *n*<sub>UC</sub> = 2000, *K* = 2000, *n*<sub>CAP</sub> = 10000 (resolved to `results/uc_cap/<feat>/` via `experiments.yaml` + `defaults.yaml`).
+Sync **Table 3** with KNN, SVM, and random forest JSON for one feature triple. Defaults match the manuscript prose: *n*<sub>UC</sub> = 2000, *K* = 5000, *n*<sub>CAP</sub> = 10000 (resolved to `results/uc_cap/<feat>/` via `experiments.yaml` + `defaults.yaml`).
 
 ## Steps
 

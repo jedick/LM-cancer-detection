@@ -7,7 +7,8 @@ rows merged over ``defaults.yaml`` (same ordering as ``helpers/list_uc_cap_featu
 then loads KNN, SVM, and random forest for both tasks and prints test and holdout ROC AUC
 as an HTML table (same nested header shape as ``helpers/table1_tetramer.py``).
 
-Default triple matches the manuscript: *n*<sub>UC</sub> = 2000, *K* = 2000, *n*<sub>CAP</sub> = 10000.
+Default triple matches the manuscript feature set 8:
+*n*<sub>UC</sub> = 2000, *K* = 5000, *n*<sub>CAP</sub> = 10000.
 """
 
 from __future__ import annotations
@@ -165,8 +166,8 @@ def main() -> int:
     p.add_argument(
         "--n-clusters",
         type=int,
-        default=2000,
-        help="K-means K (default: 2000).",
+        default=5000,
+        help="K-means K (default: 5000).",
     )
     p.add_argument(
         "--n-cap",

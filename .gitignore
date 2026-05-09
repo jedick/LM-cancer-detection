@@ -6,6 +6,7 @@ results/uc_cap/*/*baseline*
 results/hyenadna*
 #results/hyenadna/*/*.csv
 #results/hyenadna/*/*training.json
+figures/*.png
 
 # Packaging artifacts (editable installs, builds)
 *.egg-info/

@@ -238,10 +238,15 @@ ifeq ($(strip $(EXPT)),0)
 fit_uc_cap: $(UC_CAP_FULL_GRID_OUTPUTS) $(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
 	@echo "Up to date: fit_uc_cap full grid (results/uc_cap/<k>/ for each experiment JSON)."
-else
+else ifneq ($(strip $(EXPT)),)
 fit_uc_cap: $(UC_CAP_SINGLE_EXPT_ALL_FEAT_OUTPUTS) $(ROOT)/scripts/fit_classifier.py \
 		$(ROOT)/defaults.yaml $(ROOT)/experiments.yaml
 	@echo "Up to date: fit_uc_cap EXPT=$(EXPT) (all feature sets: results/uc_cap/<k>/$(word $(EXPT),$(EXPERIMENT_NAMES)).json)"
+else
+# FEAT=0 with EXPT unset: invalid for fit_uc_cap (see parse-time check when fit_uc_cap is a goal).
+# Dummy rule avoids expanding $(word $(EXPT),...) during parsing for other goals (e.g. run_uc_cap FEAT=0).
+fit_uc_cap: $(ROOT)/scripts/fit_classifier.py
+	@:
 endif
 else ifeq ($(strip $(EXPT)),0)
 ifneq ($(strip $(FEAT)),)
