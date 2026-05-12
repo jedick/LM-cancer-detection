@@ -96,6 +96,10 @@ class HyenaDNAPreTrainedModel(PreTrainedModel):
                         head_arch="linear",
                         head_hidden=None,
                         head_dropout=0.0,
+                        use_study_adv=False,
+                        n_study_classes=0,
+                        study_head_hidden=256,
+                        study_head_dropout=0.0,
                       ):
         # first check if it is a local path
         pretrained_model_name_or_path = os.path.join(path, model_name)
@@ -120,6 +124,10 @@ class HyenaDNAPreTrainedModel(PreTrainedModel):
             head_arch=head_arch,
             head_hidden=head_hidden,
             head_dropout=head_dropout,
+            use_study_adv=use_study_adv,
+            n_study_classes=n_study_classes,
+            study_head_hidden=study_head_hidden,
+            study_head_dropout=study_head_dropout,
         )
         loaded_ckpt = torch.load(
             os.path.join(pretrained_model_name_or_path, 'weights.ckpt'),

@@ -270,3 +270,511 @@ train_hyenadna:
         class_weight: balanced_sqrt
         freeze_backbone_epochs: 2
         backbone_lr_mult: 0.1
+    - name: ct_val2k_ampbf16_b20_sb_baseline_seed0
+      overrides:
+        task: cancer_type
+        epochs: 5
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: false
+    - name: ct_val2k_ampbf16_b20_sb_dann_warm_seed0
+      overrides:
+        task: cancer_type
+        epochs: 5
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 2
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+
+    # --- EXPT 17+: 20 epochs, max_length 2048, batch 20, AMP bfloat16, study_balanced, balanced CE.
+    # Baseline: 3 seeds. DANN: 3 seeds × 2 discriminator-warmup lengths (study_disc_warmup_epochs 1 vs 4;
+    # study_adv_delay_epochs: 1); study_adv_weight fixed at 0.1 (no sweep) = 6 runs.
+    - name: ct_grid20e_val2k_b20_sb_base_seed0
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: false
+    - name: ct_grid20e_val2k_b20_sb_base_seed1
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 1
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: false
+    - name: ct_grid20e_val2k_b20_sb_base_seed2
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 2
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: false
+    - name: ct_grid20e_val2k_b20_sb_dann_s0_wu1
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_grid20e_val2k_b20_sb_dann_s0_wu4
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 4
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_grid20e_val2k_b20_sb_dann_s1_wu1
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 1
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_grid20e_val2k_b20_sb_dann_s1_wu4
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 1
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 4
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_grid20e_val2k_b20_sb_dann_s2_wu1
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 2
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_grid20e_val2k_b20_sb_dann_s2_wu4
+      overrides:
+        task: cancer_type
+        epochs: 20
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        random_seed: 2
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 4
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+
+    # --- EXPT 26–33: 10-epoch probes from ct_grid20e…dann_s0_wu1 (seed 0, delay 1, wu 1, w 0.1, linear head, 20ep grid).
+    # Same recipe unless noted: val2k, b20, AMP bf16, study_balanced, balanced CE, study_adv on, grad_clip 1, tuning val_roc_auc.
+    - name: ct_probe10e_val2k_b20_dann_s0_nod0_wu2
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-4
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 0
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 2
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_probe10e_val2k_b20_dann_s0_nod0_wu4
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-4
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 0
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 4
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_probe10e_val2k_b20_dann_s0_dropmd_mlp
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-4
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        head_arch: mlp
+        head_hidden: 256
+        head_dropout: 0.1
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.1
+    - name: ct_probe10e_val2k_b20_dann_s0_drophigh_mlp
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-4
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        head_arch: mlp
+        head_hidden: 256
+        head_dropout: 0.35
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.35
+    - name: ct_probe10e_val2k_b20_dann_s0_saw005
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-4
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.05
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_probe10e_val2k_b20_dann_s0_saw02
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-4
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.2
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_probe10e_val2k_b20_dann_s0_lr1e5
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-5
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_probe10e_val2k_b20_dann_s0_lr1e5_cos
+      overrides:
+        task: cancer_type
+        epochs: 10
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: warmup_cosine
+        warmup_epochs: 2
+        min_lr_ratio: 0.1
+        learning_rate: 1.0e-5
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+
+    # --- EXPT 34–37: 25-epoch follow-ups to 10ep LR probe (appendix: low LR looked weak without extra controls).
+    # val2k, b20, AMP bf16, study_balanced, balanced CE, grad_clip 1, lr_schedule none, tuning val_roc_auc.
+    # DANN recipe matches grid dann_s0_wu1 (delay 1, warmup 1, study_adv_weight 0.1, linear head) unless noted.
+    - name: ct_probe25e_val2k_b20_lr1e5_dann_s0
+      overrides:
+        task: cancer_type
+        epochs: 25
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-5
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_probe25e_val2k_b20_lr1e5_dann_s1
+      overrides:
+        task: cancer_type
+        epochs: 25
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-5
+        random_seed: 1
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0
+    - name: ct_probe25e_val2k_b20_lr1e5_nodann_s0
+      overrides:
+        task: cancer_type
+        epochs: 25
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-5
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        study_adv: false
+    - name: ct_probe25e_val2k_b20_lr1e5_dann_s0_poollast
+      overrides:
+        task: cancer_type
+        epochs: 25
+        max_length: 2048
+        num_sets: 5
+        batch_size: 20
+        tuning_metric: val_roc_auc
+        train_sampler: study_balanced
+        lr_schedule: none
+        learning_rate: 1.0e-5
+        random_seed: 0
+        amp: true
+        amp_dtype: bfloat16
+        grad_clip_norm: 1.0
+        class_weight: balanced
+        head_pooling_mode: last
+        study_adv: true
+        study_adv_weight: 0.1
+        study_adv_delay_epochs: 1
+        study_discriminator_warmup: true
+        study_disc_warmup_epochs: 1
+        study_head_hidden: 256
+        study_head_dropout: 0.0

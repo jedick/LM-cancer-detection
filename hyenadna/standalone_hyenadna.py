@@ -799,10 +799,13 @@ class SequenceDecoder(nn.Module):
         if mode == 'ragged':
             assert not use_lengths
 
-    def forward(self, x, state=None, lengths=None, l_output=None):
+    def pooled_representation(self, x, state=None, lengths=None, l_output=None):
         """
+        Pool/slice sequence hidden states to the same tensor shape used by ``output_transform``
+        in ``forward`` (before the final linear / MLP).
+
         x: (n_batch, l_seq, d_model)
-        Returns: (n_batch, l_output, d_output)
+        Returns: (n_batch, d_model) when squeeze is True, else (n_batch, l_output, d_model)
         """
 
         if self.l_output is None:
@@ -821,13 +824,6 @@ class SequenceDecoder(nn.Module):
         elif self.mode == "first":
             restrict = lambda x: x[..., :l_output, :]
         elif self.mode == "pool":
-            restrict = lambda x: (
-                torch.cumsum(x, dim=-2)
-                / torch.arange(
-                    1, 1 + x.size(-2), device=x.device, dtype=x.dtype
-                ).unsqueeze(-1)
-            )[..., -l_output:, :]
-
             def restrict(x):
                 L = x.size(-2)
                 s = x.sum(dim=-2, keepdim=True)
@@ -871,13 +867,42 @@ class SequenceDecoder(nn.Module):
             assert x.size(-2) == 1
             x = x.squeeze(-2)
 
-        x = self.output_transform(x)
+        return x
 
+    def forward(self, x, state=None, lengths=None, l_output=None):
+        """
+        x: (n_batch, l_seq, d_model)
+        Returns: (n_batch, l_output, d_output)
+        """
+        x = self.pooled_representation(x, state=state, lengths=lengths, l_output=l_output)
+        x = self.output_transform(x)
         return x
 
     def step(self, x, state=None):
         # Ignore all length logic
         return self.output_transform(x)
+
+
+class _GradientReversalFn(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: Tensor, lambda_: float) -> Tensor:
+        ctx.lambda_ = float(lambda_)
+        return x
+
+    @staticmethod
+    def backward(ctx, grad_output: Tensor):
+        lam = ctx.lambda_
+        return -lam * grad_output, None
+
+
+class GradientReversal(nn.Module):
+    """Scale reversed gradients from a domain head into shared features (DANN)."""
+
+    def forward(self, x: Tensor, lambda_: float) -> Tensor:
+        if not isinstance(x, Tensor):
+            raise TypeError("GradientReversal expects a torch.Tensor.")
+        return _GradientReversalFn.apply(x, float(lambda_))
+
 
 #@title Model (backbone + head)
 
@@ -903,6 +928,10 @@ class HyenaDNAModel(nn.Module):
                  head_arch: str = "linear",
                  head_hidden: Optional[int] = None,
                  head_dropout: float = 0.0,
+                 use_study_adv: bool = False,
+                 n_study_classes: int = 0,
+                 study_head_hidden: int = 256,
+                 study_head_dropout: float = 0.0,
                  device=None, dtype=None, **kwargs) -> None:
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
@@ -910,6 +939,9 @@ class HyenaDNAModel(nn.Module):
             vocab_size += pad_vocab_size_multiple - (vocab_size % pad_vocab_size_multiple)
 
         self.use_head = use_head
+        self.use_study_adv = (
+            bool(use_study_adv) and int(n_study_classes) >= 2 and bool(use_head)
+        )
 
         # check if layer (config) has d_model (HF code differs from main Safari code)
         if 'd_model' not in layer:
@@ -942,6 +974,20 @@ class HyenaDNAModel(nn.Module):
                 **head_kw,
             )
 
+        self.study_head: Optional[nn.Module] = None
+        self.grad_reverse: Optional[GradientReversal] = None
+        if self.use_study_adv:
+            self.grad_reverse = GradientReversal()
+            sh = max(1, int(study_head_hidden))
+            ns = int(n_study_classes)
+            drop = float(study_head_dropout)
+            self.study_head = nn.Sequential(
+                nn.Linear(d_model, sh),
+                nn.GELU(),
+                nn.Dropout(drop),
+                nn.Linear(sh, ns),
+            )
+
         # Initialize weights and apply final processing
         self.apply(partial(_init_weights, n_layer=n_layer,
                            **(initializer_cfg if initializer_cfg is not None else {})))
@@ -952,13 +998,46 @@ class HyenaDNAModel(nn.Module):
     # def tie_weights(self):
     #     self.head.weight = self.backbone.embeddings.word_embeddings.weight
 
-    def forward(self, input_ids, position_ids=None, state=None): # state for the repo interface
+    def forward(
+        self,
+        input_ids,
+        position_ids=None,
+        state=None,
+        *,
+        return_study_logits: bool = False,
+        study_grl_lambda: float = 0.0,
+        study_discriminator_detach: bool = False,
+    ):
+        # state for the repo interface
         hidden_states = self.backbone(input_ids, position_ids=position_ids)
 
-        if self.use_head:
-            return self.head(hidden_states)
-        else:
+        if not self.use_head:
             return hidden_states
+
+        pooled = self.head.pooled_representation(hidden_states)
+        task_logits = self.head.output_transform(pooled)
+
+        if not self.use_study_adv or not return_study_logits or self.study_head is None:
+            return task_logits
+
+        if study_discriminator_detach:
+            z = pooled.detach()
+            study_logits = self.study_head(z)
+        else:
+            if self.grad_reverse is None:
+                raise RuntimeError("grad_reverse missing with use_study_adv.")
+            z = self.grad_reverse(pooled, float(study_grl_lambda))
+            study_logits = self.study_head(z)
+        return task_logits, study_logits
+
+    @torch.no_grad()
+    def eval_study_logits(self, input_ids, position_ids=None):
+        """Study-branch logits without GRL (diagnostics / validation)."""
+        if not self.use_study_adv or self.study_head is None:
+            raise RuntimeError("eval_study_logits requires use_study_adv and study_head.")
+        hidden_states = self.backbone(input_ids, position_ids=position_ids)
+        pooled = self.head.pooled_representation(hidden_states)
+        return self.study_head(pooled)
 
 """# Data pipeline
 

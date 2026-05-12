@@ -195,7 +195,7 @@ For cancer diagnosis, SVM has the best holdout performance.
 For cancer type prediction, SVM has the best holdout performance, and random forest also scores above baseline.
 KNN remains on par with the baseline (majority-class) prediction, while SVM and random forest stay far below their near-perfect in-study test performance.
 
-### Classification with HyenaDNA
+### Classification with HyenaDNA: Stability problems
 
 We report a fine-tuning grid for the pretrained 32k HyenaDNA model.
 Even though HyenaDNA offers larger max-length models, with available hardware we can only use part of the sequence data for each run.
@@ -212,6 +212,51 @@ Increasing the number of bases modeled per set does not reliably improve general
 Training trajectories and validation metrics can also vary substantially between configurations, so we treat this section as a first end-to-end baseline that we expect to revise with additional data cleaning and model training choices.
 
 ![Figure 2. HyenaDNA set-length stability across tasks and number of sets.](figures/figure2_hyenadna.svg)
+
+### Improving stability with domain adversarial training
+
+Fine-tuned HyenaDNA for cancer type often achieves strong validation and in-study test ROC AUC while holdout performance remains sensitive to optimization trajectory, random seed, and training epoch.
+Prior attempts to stabilize behavior are summarized in the [appendix](appendix.md): for example,
+randomized sequence sampling when building run tensors (to avoid head-of-file artifacts),
+shorter learning-rate schedules and warm-up variants, discriminative rates and gradient clipping,
+short-cycle SWA, staged backbone freezing, and frozen pretrained embeddings with classical heads.
+Those changes sometimes improved development metrics but did not yield a consistent, seed-robust holdout gain.
+This suggest that study-level shortcuts are a structural confound that are not solvable using a single missing hyperparameter.
+
+Domain-adversarial training targets exactly that failure mode: it encourages representations that support the clinical label
+while being less predictive of which development study produced a sample.
+We adopt the gradient-reversal formulation of Ganin *et al.* (2016), building on domain-adaptation perspectives
+in which train and target domains differ in marginal feature distributions (Ben-David *et al.*, 2010).
+Concretely, we add a study classifier on top of the pooled sequence representation,
+connected through a gradient-reversal layer, so the shared trunk is trained to fool the study head while the cancer-type head is trained as before.
+
+**Implementation (high level).**
+The existing cancer-type head remains; a small MLP predicts study identity from the same pooled features.
+An initial training phase updates only the cancer head, then a warm-up phase trains the study head without reversal (so gradients agree with study prediction).
+Finally, the reversal layer is enabled so adversarial weighting penalizes study-predictive directions in the trunk.
+Losses combine cross-entropy for cancer type (with class balancing as elsewhere) and weighted cross-entropy for study prediction.
+Optimization uses the same development splits and validation-driven checkpoint selection as other HyenaDNA runs.
+
+**Empirical takeaways (cancer type, current grid).**
+For initial DANN model tuning, we compared validation-selected best epochs on the same random seed.
+At learning rate \(10^{-4}\), adversarial training tended to hurt or erase holdout AUC relative to matched controls,
+whereas at \(10^{-5}\) we could obtain better holdout ROC AUC, suggesting strong interaction with optimization strength.
+Other knobs we explored were less rewarding: lengthening the study-head warm-up before enabling reversal,
+adjusting the adversarial loss weight, and switching the cancer head to last-token pooling instead of the default pooled representation
+either reduced holdout performance or failed to show a clear benefit in the experiments we examined.
+
+Holdout trajectories remain noisy from epoch to epoch under both DANN and no-DANN training on a single seed.
+Multi-seed comparisons at \(10^{-5}\) still show holdout variation, so we report DANN as a helpful inductive bias in this setting, not as a guarantee of stable curves.
+
+We consolidate these HyenaDNA cancer-type ablations (best recipe, higher learning rate, DANN off, class-weighting and study-balance variants,
+baseline architecture choices, and related controls) in **Table (TBD: HyenaDNA DANN / ablation grid)**.
+
+**TODOs**
+
+1. Populate the HyenaDNA DANN / ablation table from finalized JSON metrics (including at least two seeds where applicable).
+2. After the ablation grid is set, re-run the sequence-set length axis (1k, 2k, 4k, 8k, 16k) under the chosen training recipe for a direct comparison to Figure 2.
+3. Revisit `cancer_diagnosis` with the same adversarial idea if resources allow.
+   Label structure differs from cancer type (within-study cancer vs. healthy), so transfer behavior may not mirror the cancer-type experiments.
 
 ## Discussion
 
@@ -238,3 +283,9 @@ HyenaDNA is expressive enough to memorize those confounders, while SVM+UC/CAP is
 The instability isn't just optimization noise; it's the model finding different study-identity shortcuts on different seeds
 and then collapsing on holdout studies with different protocols.
 The [appendix](appendix.md) outlines the hypotheses and experiments we undertook to address this problem.
+
+## References
+
+1. Ganin, Y., Ustinova, H., Ajakan, H., Germain, P., Larochelle, H., Laviolette, F., Marchand, M., & Lempitsky, V. (2016). Domain-adversarial training of neural networks. *Journal of Machine Learning Research*, 17(59), 1–35. https://jmlr.org/papers/v17/15-239.html
+
+2. Ben-David, S., Blitzer, J., Crammer, K., Kulesza, A., Pereira, F., & Vaughan, J. W. (2010). A theory of learning from different domains. *Machine Learning*, 79(1–2), 151–175. https://doi.org/10.1007/s10994-009-5152-4

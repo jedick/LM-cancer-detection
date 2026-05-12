@@ -11,6 +11,13 @@ validation CE loss, a fixed train-subset ROC-AUC, gradient norms (when clipping 
 optional per-study AUC on validation/holdout, and score moments by label. Checkpoints are
 selected by ``train_hyenadna.tuning_metric`` (default ``val_roc_auc``).
 
+When ``study_adv`` is true, the model adds a study (domain) classifier with optional
+``study_adv_delay_epochs`` (task-only), ``study_discriminator_warmup`` plus
+``study_disc_warmup_epochs`` (train study head on detached backbone features), then
+DANN-style gradient reversal with ``study_adv_weight`` as both loss scale and GRL lambda.
+Logs include train/val study cross-entropy and val study accuracy (train-split study labels
+only; unknown studies use ``ignore_index``).
+
 Config: defaults.yaml (train_hyenadna + run_tensors + paths) with optional
 experiments.yaml train_hyenadna overrides (--expt).
 """
@@ -53,6 +60,25 @@ HEAD_MODES = ("last", "first", "pool", "sum")
 AGGREGATES = ("mean", "max")
 HALF_BATCH_SIZE = 0.5
 SET_SPLIT_INDEX = 5
+STUDY_IGNORE_INDEX = -100
+
+
+def _resolve_study_adv_phase(
+    epoch_1based: int,
+    *,
+    study_adv_enabled: bool,
+    delay_epochs: int,
+    disc_warmup_enabled: bool,
+    disc_warmup_epochs: int,
+) -> str:
+    if not study_adv_enabled:
+        return "off"
+    if epoch_1based <= int(delay_epochs):
+        return "delay"
+    wu = int(disc_warmup_epochs) if disc_warmup_enabled else 0
+    if wu > 0 and epoch_1based <= int(delay_epochs) + wu:
+        return "warmup"
+    return "dann"
 
 
 @dataclass(frozen=True)
@@ -62,6 +88,7 @@ class RunRecord:
     label: int
     task_label: str
     study_name: str
+    study_id: int
     n_sets: int
     file: Path
 
@@ -96,6 +123,7 @@ def _build_records(
     *,
     label_encoder: LabelEncoder,
     requested_num_sets: int,
+    study_name_to_id: Optional[Mapping[str, int]] = None,
 ) -> Tuple[List[RunRecord], int, Tuple[str, ...]]:
     rows = (
         run_task_df.loc[:, ["Run", "split", "task_label", "study_name"]]
@@ -118,13 +146,19 @@ def _build_records(
         n_sets = int(blob.get("n_sets", 0))
         if n_sets <= 0:
             continue
+        study_name = str(row["study_name"]).strip()
+        if study_name_to_id is None:
+            study_id = 0
+        else:
+            study_id = int(study_name_to_id.get(study_name, -1))
         out.append(
             RunRecord(
                 run=run,
                 split=str(row["split"]),
                 label=int(label_encoder.transform([str(row["task_label"])])[0]),
                 task_label=str(row["task_label"]),
-                study_name=str(row["study_name"]).strip(),
+                study_name=study_name,
+                study_id=study_id,
                 n_sets=min(n_sets, requested_num_sets),
                 file=pt_path,
             )
@@ -175,6 +209,7 @@ class RunTensorDataset(Dataset):
             "attention_mask": attention_mask,
             "n_sets": n_sets,
             "label": e.label,
+            "study_id": int(e.study_id),
             "run": e.run,
         }
 
@@ -184,12 +219,14 @@ def collate_batch(batch: List[Dict[str, object]]) -> Dict[str, object]:
     attention_mask = torch.stack([b["attention_mask"] for b in batch], dim=0)
     n_sets = torch.tensor([b["n_sets"] for b in batch], dtype=torch.long)
     labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
+    study_ids = torch.tensor([int(b["study_id"]) for b in batch], dtype=torch.long)
     runs = [str(b["run"]) for b in batch]
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
         "n_sets": n_sets,
         "label": labels,
+        "study_id": study_ids,
         "run": runs,
     }
 
@@ -203,8 +240,9 @@ def training_loss(
     amp_dtype: torch.dtype,
     ce_weight: Optional[torch.Tensor],
     label_smoothing: float,
+    study_train_kw: Optional[Mapping[str, object]] = None,
 ) -> torch.Tensor:
-    loss_sum, denom = training_loss_sum_and_count(
+    loss_sum, denom, _ = training_loss_sum_and_count(
         model,
         batch,
         device,
@@ -212,6 +250,7 @@ def training_loss(
         amp_dtype=amp_dtype,
         ce_weight=ce_weight,
         label_smoothing=label_smoothing,
+        study_train_kw=study_train_kw,
     )
     if denom <= 0:
         raise SystemExit("Training batch has zero valid sets after masking.")
@@ -227,19 +266,46 @@ def training_loss_sum_and_count(
     amp_dtype: torch.dtype,
     ce_weight: Optional[torch.Tensor] = None,
     label_smoothing: float = 0.0,
-) -> Tuple[torch.Tensor, int]:
+    study_train_kw: Optional[Mapping[str, object]] = None,
+) -> Tuple[torch.Tensor, int, Optional[Dict[str, float]]]:
     input_ids = batch["input_ids"].to(device)
     bsz, n_set, seq_len = input_ids.shape
+    flat_in = input_ids.view(bsz * n_set, seq_len)
+    nv = batch["n_sets"]
+    labels = batch["label"].to(device)
+    mask = torch.arange(n_set, device=device).unsqueeze(0) < nv.to(device).unsqueeze(1)
+    study_ids = batch.get("study_id")
+    if study_ids is None:
+        raise SystemExit("Batch missing study_id (internal error).")
+    study_ids_t = study_ids.to(device)
+
+    phase = (
+        str(study_train_kw.get("phase", "off")).strip().lower()
+        if study_train_kw is not None
+        else "off"
+    )
+    use_study = bool(getattr(model, "use_study_adv", False)) and phase in ("warmup", "dann")
+
     with _amp_autocast(device, amp_enabled=amp_enabled, amp_dtype=amp_dtype):
-        logits = model(input_ids.view(bsz * n_set, seq_len))
-        logits = logits.view(bsz, n_set, -1)
-        nv = batch["n_sets"]
-        labels = batch["label"].to(device)
-        mask = torch.arange(n_set, device=device).unsqueeze(0) < nv.to(device).unsqueeze(1)
+        if use_study:
+            assert study_train_kw is not None
+            logits, study_logits = model(
+                flat_in,
+                return_study_logits=True,
+                study_grl_lambda=float(study_train_kw.get("study_grl_lambda", 0.0)),
+                study_discriminator_detach=(phase == "warmup"),
+            )
+            logits = logits.view(bsz, n_set, -1)
+            study_logits = study_logits.view(bsz, n_set, -1)
+        else:
+            logits = model(flat_in)
+            logits = logits.view(bsz, n_set, -1)
+            study_logits = None
+
         flat_logits = logits[mask]
         flat_y = labels.unsqueeze(1).expand(bsz, n_set)[mask]
     if flat_logits.numel() == 0:
-        return torch.zeros((), device=device), 0
+        return torch.zeros((), device=device), 0, None
     ce_kw: Dict[str, object] = {"reduction": "sum"}
     if ce_weight is not None:
         # AMP can produce bf16/fp16 logits; class-weight tensor must match.
@@ -249,7 +315,36 @@ def training_loss_sum_and_count(
         )
     if label_smoothing > 0.0:
         ce_kw["label_smoothing"] = float(label_smoothing)
-    return F.cross_entropy(flat_logits, flat_y, **ce_kw), int(flat_y.shape[0])
+    task_ce = F.cross_entropy(flat_logits, flat_y, **ce_kw)
+    n_task = int(flat_y.shape[0])
+
+    if (
+        study_logits is None
+        or phase in ("off", "delay")
+        or not getattr(model, "use_study_adv", False)
+    ):
+        return task_ce, n_task, None
+
+    flat_study_logits = study_logits[mask]
+    flat_study_y = study_ids_t.unsqueeze(1).expand(bsz, n_set)[mask].long()
+    study_ce = F.cross_entropy(
+        flat_study_logits,
+        flat_study_y,
+        ignore_index=STUDY_IGNORE_INDEX,
+        reduction="sum",
+    )
+    n_study_valid = int((flat_study_y != STUDY_IGNORE_INDEX).sum().item())
+    if n_study_valid <= 0:
+        return task_ce, n_task, None
+
+    w = float(study_train_kw.get("study_adv_weight", 0.1))
+    scale = float(n_task) / float(max(n_study_valid, 1))
+    total = task_ce + w * study_ce * scale
+    extra = {
+        "study_ce_sum": float(study_ce.detach().float().item()),
+        "study_n": float(n_study_valid),
+    }
+    return total, n_task, extra
 
 
 def _slice_batch_sets(
@@ -267,6 +362,7 @@ def _slice_batch_sets(
         "attention_mask": batch_attention_mask[:, start:end, :],
         "n_sets": sub_n_sets,
         "label": batch["label"],
+        "study_id": batch["study_id"],
         "run": batch["run"],
     }
 
@@ -479,7 +575,7 @@ def _eval_mean_ce_loss(
     count = 0
     with torch.no_grad():
         for batch in loader:
-            loss_sum, n = training_loss_sum_and_count(
+            loss_sum, n, _ = training_loss_sum_and_count(
                 model,
                 batch,
                 device,
@@ -487,10 +583,57 @@ def _eval_mean_ce_loss(
                 amp_dtype=amp_dtype,
                 ce_weight=ce_weight,
                 label_smoothing=label_smoothing,
+                study_train_kw=None,
             )
             total += float(loss_sum.item())
             count += int(n)
     return total / max(count, 1)
+
+
+def _eval_val_study_branch_metrics(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    amp_enabled: bool,
+    amp_dtype: torch.dtype,
+) -> Tuple[float, float, int]:
+    """Mean study CE and accuracy on validation (only rows with train-mapped study_id)."""
+    if not getattr(model, "use_study_adv", False) or not hasattr(model, "eval_study_logits"):
+        return float("nan"), float("nan"), 0
+    model.eval()
+    ce_sum = 0.0
+    correct = 0
+    n_labeled = 0
+    with torch.no_grad():
+        for batch in loader:
+            input_ids = batch["input_ids"].to(device)
+            bsz, n_set, seq_len = input_ids.shape
+            nv = batch["n_sets"].to(device)
+            study_ids = batch["study_id"].to(device)
+            mask = torch.arange(n_set, device=device).unsqueeze(0) < nv.unsqueeze(1)
+            flat_in = input_ids.view(bsz * n_set, seq_len)
+            flat_study_y = study_ids.unsqueeze(1).expand(bsz, n_set)[mask]
+            with _amp_autocast(device, amp_enabled=amp_enabled, amp_dtype=amp_dtype):
+                slogits = model.eval_study_logits(flat_in)
+            slogits = slogits.view(bsz, n_set, -1)
+            flat_slogits = slogits[mask]
+            labeled = flat_study_y != STUDY_IGNORE_INDEX
+            n_lab = int(labeled.sum().item())
+            if n_lab <= 0:
+                continue
+            ce = F.cross_entropy(
+                flat_slogits[labeled],
+                flat_study_y[labeled].long(),
+                reduction="sum",
+            )
+            pred = flat_slogits[labeled].argmax(dim=-1)
+            ce_sum += float(ce.item())
+            correct += int((pred == flat_study_y[labeled]).sum().item())
+            n_labeled += n_lab
+    if n_labeled <= 0:
+        return float("nan"), float("nan"), 0
+    return ce_sum / n_labeled, correct / float(n_labeled), n_labeled
 
 
 def _make_optimizer(
@@ -502,6 +645,8 @@ def _make_optimizer(
 ) -> torch.optim.Optimizer:
     backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
     head_params = [p for p in model.head.parameters() if p.requires_grad]
+    if getattr(model, "study_head", None) is not None:
+        head_params.extend([p for p in model.study_head.parameters() if p.requires_grad])
     groups: List[Dict[str, object]] = []
     if backbone_params:
         blr = lr * float(backbone_lr_mult) if backbone_lr_mult is not None else lr
@@ -518,6 +663,9 @@ def _set_backbone_requires_grad(model: torch.nn.Module, trainable: bool) -> None
         p.requires_grad = trainable
     for p in model.head.parameters():
         p.requires_grad = True
+    if getattr(model, "study_head", None) is not None:
+        for p in model.study_head.parameters():
+            p.requires_grad = True
 
 
 def _make_lr_scheduler(
@@ -717,11 +865,14 @@ def train_epoch(
     ce_weight: Optional[torch.Tensor],
     label_smoothing: float,
     grad_clip_norm: Optional[float],
-) -> Tuple[float, float]:
+    study_train_kw: Optional[Mapping[str, object]] = None,
+) -> Tuple[float, float, Dict[str, float]]:
     model.train()
     total = 0.0
     n_batches = 0
     grad_norms: List[float] = []
+    study_ce_num = 0.0
+    study_ce_den = 0.0
     for batch in tqdm(loader, desc="Train", leave=False):
         if split_set_microbatch:
             first_half = _slice_batch_sets(batch, start=0, end=SET_SPLIT_INDEX)
@@ -733,7 +884,7 @@ def train_epoch(
                 continue
             optimizer.zero_grad(set_to_none=True)
             if denom_1 > 0:
-                loss_sum_1, _ = training_loss_sum_and_count(
+                loss_sum_1, _, extra1 = training_loss_sum_and_count(
                     model,
                     first_half,
                     device,
@@ -741,16 +892,20 @@ def train_epoch(
                     amp_dtype=amp_dtype,
                     ce_weight=ce_weight,
                     label_smoothing=label_smoothing,
+                    study_train_kw=study_train_kw,
                 )
                 scaled_loss_1 = loss_sum_1 / float(denom)
                 if scaler is not None:
                     scaler.scale(scaled_loss_1).backward()
                 else:
                     scaled_loss_1.backward()
+                if extra1 is not None:
+                    study_ce_num += float(extra1["study_ce_sum"])
+                    study_ce_den += float(extra1["study_n"])
             else:
                 loss_sum_1 = torch.zeros((), device=device)
             if denom_2 > 0:
-                loss_sum_2, _ = training_loss_sum_and_count(
+                loss_sum_2, _, extra2 = training_loss_sum_and_count(
                     model,
                     second_half,
                     device,
@@ -758,19 +913,23 @@ def train_epoch(
                     amp_dtype=amp_dtype,
                     ce_weight=ce_weight,
                     label_smoothing=label_smoothing,
+                    study_train_kw=study_train_kw,
                 )
                 scaled_loss_2 = loss_sum_2 / float(denom)
                 if scaler is not None:
                     scaler.scale(scaled_loss_2).backward()
                 else:
                     scaled_loss_2.backward()
+                if extra2 is not None:
+                    study_ce_num += float(extra2["study_ce_sum"])
+                    study_ce_den += float(extra2["study_n"])
             else:
                 loss_sum_2 = torch.zeros((), device=device)
             gn = _optimizer_step(model, optimizer, scaler, grad_clip_norm)
             grad_norms.append(gn)
             total += float((loss_sum_1 + loss_sum_2).item() / float(denom))
         else:
-            loss = training_loss(
+            loss_sum, denom, extra_full = training_loss_sum_and_count(
                 model,
                 batch,
                 device,
@@ -778,7 +937,11 @@ def train_epoch(
                 amp_dtype=amp_dtype,
                 ce_weight=ce_weight,
                 label_smoothing=label_smoothing,
+                study_train_kw=study_train_kw,
             )
+            if denom <= 0:
+                raise SystemExit("Training batch has zero valid sets after masking.")
+            loss = loss_sum / float(denom)
             optimizer.zero_grad(set_to_none=True)
             if scaler is not None:
                 scaler.scale(loss).backward()
@@ -787,10 +950,16 @@ def train_epoch(
             gn = _optimizer_step(model, optimizer, scaler, grad_clip_norm)
             grad_norms.append(gn)
             total += float(loss.item())
+            if extra_full is not None:
+                study_ce_num += float(extra_full["study_ce_sum"])
+                study_ce_den += float(extra_full["study_n"])
         n_batches += 1
     mean_loss = total / max(n_batches, 1)
     mean_gn = sum(grad_norms) / len(grad_norms) if grad_norms else float("nan")
-    return mean_loss, mean_gn
+    train_study_ce = (
+        float(study_ce_num / study_ce_den) if study_ce_den > 0.0 else float("nan")
+    )
+    return mean_loss, mean_gn, {"train_study_ce": train_study_ce}
 
 
 def _parse_argv(argv: Optional[Sequence[str]]) -> argparse.Namespace:
@@ -895,6 +1064,12 @@ def _write_training_log(path: Path, epoch_rows: Sequence[Mapping[str, object]]) 
                 ),
                 "val_score_by_label": dict(row["val_score_by_label"]),
                 "holdout_score_by_label": dict(row["holdout_score_by_label"]),
+                "study_adv_phase": str(row["study_adv_phase"]),
+                "study_grl_lambda": _float_or_none(float(row["study_grl_lambda"])),
+                "train_study_ce": _float_or_none(float(row["train_study_ce"])),
+                "val_study_ce": _float_or_none(float(row["val_study_ce"])),
+                "val_study_accuracy": _float_or_none(float(row["val_study_accuracy"])),
+                "val_study_n_labeled": int(row["val_study_n_labeled"]),
             }
         )
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -992,11 +1167,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pos_class_index = 1
     neg_label = class_names[neg_class_index]
     pos_label = class_names[pos_class_index]
+
+    study_adv_enabled = bool(merged.get("study_adv", False))
+    study_name_to_id: Optional[Dict[str, int]] = None
+    if study_adv_enabled:
+        tr_st = run_task_df.loc[run_task_df["split"] == "train", "study_name"]
+        uniq_studies = sorted({str(s).strip() for s in tr_st.unique()})
+        if len(uniq_studies) < 2:
+            raise SystemExit(
+                "train_hyenadna.study_adv requires at least 2 distinct study_name values "
+                "in the train split."
+            )
+        study_name_to_id = {name: i for i, name in enumerate(uniq_studies)}
+
     all_records, n_skipped_missing_cache, missing_cache_examples = _build_records(
         run_task_df,
         run_tensors_root,
         label_encoder=enc,
         requested_num_sets=num_sets,
+        study_name_to_id=study_name_to_id,
     )
     if n_skipped_missing_cache:
         ex = ", ".join(missing_cache_examples)
@@ -1043,7 +1232,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(
         f"\nHyenaDNA train | task={task} model={model_name} | "
         f"positive_class={pos_label!r} (index {pos_class_index}) | "
-        f"precision={'amp(' + amp_dtype_name + ')' if amp_enabled else 'fp32'}",
+        f"precision={'amp(' + amp_dtype_name + ')' if amp_enabled else 'fp32'} | "
+        f"study_adv={'on' if study_adv_enabled else 'off'}",
         flush=True,
     )
 
@@ -1130,6 +1320,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     ckpt_dir = resolve_repo_path(repo_root, str(merged["checkpoint_dir"]).strip())
+    n_study_classes = len(study_name_to_id) if study_name_to_id is not None else 0
+    study_head_hidden = int(merged.get("study_head_hidden") or 256)
+    study_head_dropout = float(merged.get("study_head_dropout") or 0.0)
     model = HyenaDNAPreTrainedModel.from_pretrained(
         str(ckpt_dir),
         model_name,
@@ -1142,6 +1335,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         head_arch=head_arch,
         head_hidden=head_hidden if head_arch == "mlp" else None,
         head_dropout=head_dropout,
+        use_study_adv=study_adv_enabled,
+        n_study_classes=n_study_classes,
+        study_head_hidden=study_head_hidden,
+        study_head_dropout=study_head_dropout,
     )
     model = model.to(device)
 
@@ -1233,7 +1430,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
 
         assert opt is not None
-        last_loss, batch_grad_norm = train_epoch(
+        study_phase = _resolve_study_adv_phase(
+            ep,
+            study_adv_enabled=study_adv_enabled,
+            delay_epochs=int(merged.get("study_adv_delay_epochs") or 0),
+            disc_warmup_enabled=bool(merged.get("study_discriminator_warmup", False)),
+            disc_warmup_epochs=int(merged.get("study_disc_warmup_epochs") or 0),
+        )
+        study_train_kw: Optional[Dict[str, object]] = None
+        if study_adv_enabled:
+            saw = float(merged.get("study_adv_weight") or 0.1)
+            study_train_kw = {
+                "phase": study_phase,
+                "study_adv_weight": saw,
+                "study_grl_lambda": float(saw) if study_phase == "dann" else 0.0,
+            }
+            print(
+                f"study_adv phase={study_phase}  study_grl_lambda={study_train_kw['study_grl_lambda']}",
+                flush=True,
+            )
+
+        last_loss, batch_grad_norm, train_study_stats = train_epoch(
             model,
             train_loader,
             opt,
@@ -1245,7 +1462,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ce_weight=ce_weight,
             label_smoothing=label_smoothing,
             grad_clip_norm=grad_clip_norm,
+            study_train_kw=study_train_kw,
         )
+        train_study_ce = float(train_study_stats["train_study_ce"])
 
         val_loss = _eval_mean_ce_loss(
             model,
@@ -1256,6 +1475,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ce_weight=ce_weight,
             label_smoothing=label_smoothing,
         )
+
+        val_study_ce = float("nan")
+        val_study_acc = float("nan")
+        val_study_n_labeled = 0
+        if study_adv_enabled:
+            val_study_ce, val_study_acc, val_study_n_labeled = _eval_val_study_branch_metrics(
+                model,
+                val_loader,
+                device,
+                amp_enabled=amp_eval_enabled,
+                amp_dtype=amp_dtype,
+            )
 
         val_true, val_score = run_level_scores(
             model,
@@ -1389,6 +1620,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "holdout_per_study_score_diagnostics": hold_ps_diag,
                 "val_score_by_label": val_by_label,
                 "holdout_score_by_label": hold_by_label,
+                "study_adv_phase": str(study_phase),
+                "study_grl_lambda": float(study_train_kw["study_grl_lambda"]) if study_train_kw else 0.0,
+                "train_study_ce": float(train_study_ce),
+                "val_study_ce": float(val_study_ce),
+                "val_study_accuracy": float(val_study_acc),
+                "val_study_n_labeled": int(val_study_n_labeled),
             }
         )
         if training_log_path is not None:
@@ -1415,12 +1652,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             scheduler.step()
 
         print(
-            f"train_loss={last_loss:.6f}  val_loss={val_loss:.6f}  "
-            f"val_roc_auc={val_auc:.6f}  val_f1_weighted={val_f1:.6f}  "
-            f"val_study_macro_roc_auc={val_study_macro_auc:.6f}  "
-            f"train_roc_auc(subset)={train_auc:.6f}  "
+            f"train_loss={last_loss:.6f}  val_loss={val_loss:.6f}  val_roc_auc={val_auc:.6f}  "
             f"test_roc_auc={test_auc:.6f}  holdout_roc_auc={hold_auc:.6f}  "
-            f"grad_norm={batch_grad_norm:.6f}  (run-level; logits={aggregate})",
+            f"grad_norm={batch_grad_norm:.6f}  (run-level; logits={aggregate})"
+            + (
+                f"  train_study_ce={train_study_ce:.4f}  val_study_ce={val_study_ce:.4f}  "
+                f"val_study_acc={val_study_acc:.4f}"
+                if study_adv_enabled
+                else ""
+            ),
             flush=True,
         )
 

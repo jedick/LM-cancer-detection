@@ -199,6 +199,17 @@ train_hyenadna:
   # Optional metrics JSON path; null disables. Empty string (CLI --results-json) uses
   # results/scratch/train_hyenadna_<task>_<utc>.json. Experiments may set via template.
   results_json: null
+  # Study domain adversarial (DANN-style) head on pooled backbone features (train_hyenadna only).
+  study_adv: false
+  # Weight on study CE and GRL backward scale during the adversarial phase.
+  study_adv_weight: 0.1
+  # Epochs 1..N: cancer loss only (study branch inactive).
+  study_adv_delay_epochs: 0
+  # If true, after the delay run study_disc_warmup_epochs with study head on detached features.
+  study_discriminator_warmup: false
+  study_disc_warmup_epochs: 0
+  study_head_hidden: 256
+  study_head_dropout: 0.0
 
 # Frozen HyenaDNA feature extraction (scripts/extract_embeddings.py).
 # Produces one consolidated CSV per feature set in paths.embeddings_dir.

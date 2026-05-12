@@ -25,6 +25,11 @@ We also tested study-level validation ROC as a tuning target. In the current spl
 ### Current Interpretation and Next-Step Hypothesis
 Current evidence supports an optimization-and-calibration instability hypothesis. The model can fit strong development discrimination but remains sensitive to trajectory and tends to overcommit to study-associated class structure. Across many interventions, conclusions can change substantially with random seed, so no single configuration can yet be treated as a robust default. The next experiments prioritize reducing optimization variance and calibration collapse while keeping data processing fixed and the experiment grid small. After stabilizing cancer type behavior, we will transfer the selected training recipe to cancer diagnosis.
 
+### Classification Using HyenaDNA Fixed Embeddings
+We ran an orthogonal check that bypasses HyenaDNA fine-tuning: extract run-level features from a pretrained backbone and fit the downstream classifiers on those frozen representations. The goal was to test whether pretrained sequence representations alone carry transferable signal.
+
+Development behavior differed by task: cancer type showed stronger in-study discrimination than cancer diagnosis, while cancer diagnosis remained comparatively modest. In both tasks, however, development signal did not reliably carry to holdout, and SVM did not consistently outperform random forest. Fixed embeddings remain a useful baseline diagnostic, but not a robust replacement for the current stability and transfer path.
+
 ### Stability Hypothesis Tracker
 
 | Hypothesis | Intervention | Observed effect | Decision |
@@ -35,5 +40,6 @@ Current evidence supports an optimization-and-calibration instability hypothesis
 | AMP is a safe drop-in for class-weighted runs | bfloat16 AMP at memory-safe batch size | Mixed transfer performance; required dtype bug fix for class-weight path | Secondary option, not default |
 | Optimization variance drives instability | Lower learning rate, warmup-cosine schedule, and gradient clipping | Reduced instability in some trajectories but did not yield a consistent cross-seed winner | Keep as secondary stabilizers; not sufficient alone |
 | Freeze and unfreeze backbone improves transfer stability | Freeze_backbone_epochs with reduced backbone learning-rate multiplier | Mixed holdout outcomes with large post-unfreeze gradient spikes in some runs | Not selected as a default path |
+| Pretrained HyenaDNA representations plus classical classifiers can bypass fine-tuning instability | Extract frozen run-level embeddings from pretrained `hyenadna-small-32k-seqlen` (no fine-tuning) and fit SVM/random forest | Strong development signals did not translate into reliable holdout transfer | Keep as a baseline check; not selected as primary path |
 | Seed sensitivity dominates model selection risk | Repeated seed sweeps under near-identical configurations | Large holdout spread persisted despite similar validation and test AUC | Require multi-seed evidence before declaring improvements |
 
