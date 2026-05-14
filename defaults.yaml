@@ -162,7 +162,7 @@ train_hyenadna:
   # If > 0: freeze backbone for epochs 1..N then unfreeze (ignored when freeze_backbone is true).
   freeze_backbone_epochs: 0
   # Optimization
-  epochs: 20
+  epochs: 30
   # Batch size accepts a positive integer, or exactly 0.5 to train one run at a time
   # with two micro-passes over set slices [0:5] and [5:10] (requires num_sets: 10).
   batch_size: 20
@@ -188,7 +188,7 @@ train_hyenadna:
   # Class weights: none | balanced | balanced_sqrt (tempered inverse frequency).
   class_weight: balanced
   # Max gradient L2 norm; null disables clipping.
-  grad_clip_norm: 1.0
+  grad_clip_norm: null
   # train sampler: random | study_balanced (approximate uniform sampling over study_name).
   train_sampler: study_balanced
   # Epoch metric used to pick the best checkpoint:
@@ -205,7 +205,7 @@ train_hyenadna:
   # Study domain adversarial (DANN-style) head on pooled backbone features (train_hyenadna only).
   study_adv: true
   # Weight on study CE and GRL backward scale during the adversarial phase.
-  study_adv_weight: 0.1
+  study_adv_weight: 0.3
   # Epochs 1..N: cancer loss only (study branch inactive).
   study_adv_delay_epochs: 1
   # If true, after the delay run study_disc_warmup_epochs with study head on detached features.

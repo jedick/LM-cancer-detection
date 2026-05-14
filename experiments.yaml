@@ -66,56 +66,36 @@ train_hyenadna:
     #   (with batch_size=20 uses ca. 15000 MiB GPU memory):
     #   - about 26 minutes for cd_* experiments
     #   - about 13 minutes for ct_* experiments
-    # Estimated total time for 10 experiments with 4 seeds and 20 epochs:
-    #   10 * (26 + 13) * 4/3 * 20/10 = 1040 minutes (17.3 hours)
+    # Estimated total time for 6 experiments with 5 seeds and 30 epochs:
+    #   6 * (26 + 13) * 5/3 * 30/10 = 1170 minutes (19.5 hours)
     - name: best_recipe  # 1
       overrides:
         task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
-    - name: high_lr  # 2
+        random_seed: "0,1,2,3,4"
+    - name: no_study_balanced  # 2
       overrides:
         task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
-        learning_rate: 1.0e-4
-    - name: no_grad_clip  # 3
-      overrides:
-        task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
-        grad_clip_norm: null
-    - name: no_study_balanced  # 4
-      overrides:
-        task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
+        random_seed: "0,1,2,3,4"
         train_sampler: random
-    - name: no_class_weight  # 5
+    - name: no_class_weight  # 3
       overrides:
         task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
+        random_seed: "0,1,2,3,4"
         class_weight: none
-    - name: head_arch_mlp  # 6
+    - name: high_lr  # 4
       overrides:
         task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
-        head_arch: mlp
-    - name: tuning_val_f1  # 7
+        random_seed: "0,1,2,3,4"
+        learning_rate: 1.0e-4
+    - name: hi_adv_weight  # 5
       overrides:
         task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
-        tuning_metric: val_f1_weighted
-    - name: lr_schedule  # 8
+        random_seed: "0,1,2,3,4"
+        study_adv_weight: 0.6
+    - name: no_dann  # 6
       overrides:
         task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
-        lr_schedule: warmup_cosine
-    - name: hi_adv_weight  # 9
-      overrides:
-        task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
-        study_adv_weight: 0.3
-    - name: no_dann  # 10
-      overrides:
-        task: "cancer_diagnosis,cancer_type"
-        random_seed: "0,1,2,3"
+        random_seed: "0,1,2,3,4"
         study_adv: false
 #    - name: max_length
 #      overrides:

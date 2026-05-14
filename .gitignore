@@ -1,10 +1,7 @@
 fasta
 outputs
 checkpoints
-results/scratch/
-results/uc_cap/*/*baseline*
-results/embeddings*
-results/hyenadna*
+results
 manuscript/*.png
 
 # Packaging artifacts (editable installs, builds)

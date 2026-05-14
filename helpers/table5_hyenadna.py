@@ -2,7 +2,8 @@
 """
 Build Table 5 (HyenaDNA ablations) as HTML under manuscript/table5_hyenadna.html.
 
-Reads ``experiments.yaml`` ``train_hyenadna.experiments`` and aggregates
+Reads ``experiments.yaml`` ``train_hyenadna.experiments`` (row order preserved)
+and aggregates
 ``metrics.test.roc_auc`` / ``metrics.holdout.roc_auc`` from per-seed files:
 ``{task_abbrv}_{name}_<L>k_s<seed>.json`` under ``results/hyenadna/``.
 
@@ -23,23 +24,17 @@ from typing import Dict, List, Optional, Set, Tuple
 import yaml
 
 
-# Plain-English row labels for train_hyenadna.experiments in experiments.yaml.
-# Descriptions may contain HTML (e.g. <sup>) and are intentionally not escaped
-# when rendered into the <td>.
+# Plain-English row labels keyed by ``train_hyenadna.experiments[].name``.
+# Row order follows ``experiments.yaml``. Descriptions may contain HTML (e.g.
+# <sup>) and are intentionally not escaped when rendered into the <td>.
 ABLATION_DESCRIPTIONS: Dict[str, str] = {
     "best_recipe": "Best recipe (baseline)",
-    "high_lr": "Higher learning rate (10<sup>\u22124</sup> instead of 10<sup>\u22125</sup>)",
-    "no_grad_clip": "No gradient clipping",
     "no_study_balanced": "Random training sampler (no study-balanced sampling)",
     "no_class_weight": "No class weighting",
-    "head_arch_mlp": "Multilayer perceptron classification head (instead of linear)",
-    "tuning_val_f1": "Tune by validation weighted F1 (instead of validation ROC AUC)",
-    "lr_schedule": "Warmup + cosine learning-rate schedule",
-    "hi_adv_weight": "Higher study adversarial weight (0.3 instead of baseline)",
+    "high_lr": "Higher learning rate (10<sup>\u22124</sup> instead of 10<sup>\u22125</sup>)",
+    "hi_adv_weight": "Higher study adversarial weight (0.6 instead of 0.3)",
     "no_dann": "No domain adversarial training",
 }
-ABLATION_ORDER: Tuple[str, ...] = tuple(ABLATION_DESCRIPTIONS.keys())
-N_ABLATIONS: int = len(ABLATION_ORDER)
 TASK_COLUMNS: Tuple[Tuple[str, str], ...] = (
     ("cd", "Cancer diagnosis"),
     ("ct", "Cancer type"),
@@ -87,23 +82,19 @@ def _experiments(repo_root: Path) -> List[Dict[str, object]]:
     base = _train_hyenadna_base(repo_root)
     exp_cfg = _load_yaml(repo_root / "experiments.yaml").get("train_hyenadna") or {}
     rows = exp_cfg.get("experiments") or []
-    if not isinstance(rows, list) or len(rows) < N_ABLATIONS:
-        n_got = len(rows) if isinstance(rows, list) else 0
+    if not isinstance(rows, list) or not rows:
         raise SystemExit(
-            "experiments.yaml train_hyenadna.experiments must list at least "
-            f"{N_ABLATIONS} entries; got {n_got}."
+            "experiments.yaml train_hyenadna.experiments must be a non-empty list."
         )
     out: List[Dict[str, object]] = []
-    for idx in range(N_ABLATIONS):
-        row = rows[idx]
+    for idx, row in enumerate(rows):
         if not isinstance(row, dict):
             raise SystemExit(f"experiments.yaml row {idx + 1} is not a mapping.")
         name = str(row.get("name") or "").strip()
-        expected = ABLATION_ORDER[idx]
-        if name != expected:
+        if name not in ABLATION_DESCRIPTIONS:
             raise SystemExit(
-                f"experiments.yaml row {idx + 1}: expected name {expected!r}, "
-                f"got {name!r}. Update ABLATION_DESCRIPTIONS to match."
+                f"experiments.yaml row {idx + 1}: unknown experiment name {name!r}; "
+                "add a description to ABLATION_DESCRIPTIONS in helpers/table5_hyenadna.py."
             )
         overrides = row.get("overrides") or {}
         if not isinstance(overrides, dict):

@@ -47,7 +47,7 @@ See the list for a quick overview of the steps and read below for details.
 
 1. Installation: `pip install -r requirements.txt` installs dependencies including the local `hyenadna` package in editable mode.
 2. Download data: `make download_data` downloads 16S sequences from SRA (about 9 GB on disk).
-3. Tetramer counts: `make -j4 tetramer_counts` (sequence-level tetramer counting and xzipping output files is CPU-heavy; 5+ hours and 5+ GB on disk).
+3. Tetramer counts: `make -j4 tetramer_counts` (sequence-level tetramer counting and xzipping output files is CPU-heavy; 10+ hours and 5+ GB on disk).
 4. Tetramer frequencies: `make tetramer_frequencies` (aggregates tetramer counts to run-level percentages, saved in `outputs/tetramer_frequencies.csv`).
 5. Tetramer classifier: `make -j4 fit_tetramer EXPT=0` generates results files in `results/tetramer` (about 6 min).
 6. Sequence cache: `make sequence_cache` generates a Parquet file with tetramer counts for the first 10000 sequences in each run.
