@@ -9,7 +9,7 @@ CAP (cluster abundance profiles):
   - Assign n_cap sequences per run to nearest centroid and aggregate K-dimensional
     cluster count/abundance vectors per run.
   - n_cap may be an integer or "all". When "all", sequence rows are streamed from
-    per-run sequence count files under outputs/<cancer_type>/<study_name>/<Run>.csv(.xz).
+    per-run sequence count files under outputs/tetramer_counts/<cancer_type>/<study_name>/<Run>.csv(.xz).
 
 Input sequence features are tetramer count vectors (256 columns).
 

@@ -1,5 +1,5 @@
 ---
-description: Data analysis pipeline conventions (SRA/FASTA layout, Makefile+YAML source of truth, long-job progress)
+description: Data analysis pipeline conventions (SRA/FASTA layout, Make+YAML entrypoint, CLI minimalism, long-job progress)
 alwaysApply: true
 ---
 
@@ -7,11 +7,17 @@ alwaysApply: true
 
 ## Source of truth and execution entrypoint
 
-- Treat **`defaults.yaml`** as the source of truth for pipeline paths and default parameters.
-- Prefer running pipeline steps via **`Makefile` targets** (`download_data`, `tetramer_frequencies`, `sequence_cache`, `fit_tetramer`, `fit_uc_cap`, `run_uc_cap`) instead of ad hoc script commands in docs and guidance.
+- Treat **`defaults.yaml`** as the source of truth for pipeline paths and default parameters; use **`experiments.yaml`** for named experiment rows, feature-set lists, and overlays that **`EXPT`** / **`FEAT`** select (see below).
+- Prefer running pipeline steps via **`Makefile` targets** (`download_data`, `tetramer_counts`, `tetramer_frequencies`, `sequence_cache`, `fit_tetramer`, `fit_uc_cap`, `run_uc_cap`, `run_tensors`, `extract_embeddings`, `fit_embeddings`, `audit_run_tensors`, `train_hyenadna`, `explain`) instead of ad hoc script commands in docs and guidance.
 - **`make run_tensors`** builds a single tensor cache from **`defaults.yaml`** `run_tensors` under **`paths.run_tensors_dir/`** (`<Run>.pt` files, no cache subdirectories). **`make train_hyenadna EXPT=0`** runs all **`experiments.yaml`** `train_hyenadna.experiments` rows against that cache. Experiment metrics default to **`results/hyenadna/{name}.json`**.
 - **`EXPT`** selects a row from **`experiments.yaml`** → **`fit_classifier.experiments`** (1-based index for `scripts/fit_classifier.py --expt`); the same experiment definition applies whether you use **`--tetramer`** or **`--uc_cap`**. **`FEAT`** selects UC/CAP pipeline feature sets (`run_uc_cap`) and which CAP CSV **`fit_uc_cap`** classifies when set. For **`make fit_uc_cap`**, combine **`FEAT`** and **`EXPT`** for Make-driven JSON under **`results/uc_cap/<feature_index>/`**: **`FEAT=0 EXPT=<n>`** (one experiment, all feature sets), **`FEAT=<n> EXPT=0`** (all experiments, one feature set; same JSON stems as **`make fit_tetramer EXPT=0`**), **`FEAT=0 EXPT=0`** (full grid). A bare **`FEAT=0`** or **`EXPT=0`** is invalid.
-- Avoid hardcoding pipeline paths/defaults in multiple places; when a path/parameter changes in `defaults.yaml`, update Makefile wiring and README pipeline references in the same change.
+- Avoid hardcoding pipeline paths/defaults in multiple places; when a path or default changes in **`defaults.yaml`** (or experiment lists/templates in **`experiments.yaml`**), update Makefile wiring and README pipeline references in the same change.
+
+## Make-driven scripts and CLI surface
+
+- **YAML first:** paths, split settings, classifier grids, tensor/embedding/sequence-cache settings, and UC/CAP baseline lists belong in **`defaults.yaml`**. Experiment names, `train_hyenadna` / `extract_embeddings` / `run_uc_cap_pipeline` rows, and merged feature overlays belong in **`experiments.yaml`**. Scripts invoked from Make should load these files from the repo root unless there is a rare, explicit reason not to.
+- **CLI minimalism:** keep **only** CLI flags that the **Makefile** (or a clearly documented Make variable) actually passes — for example **`EXPT`** → **`--expt`**, **`FEAT`** → **`--feat`**, and **mode** switches such as **`--tetramer`**, **`--uc_cap`**, **`--embeddings`**, plus **`--results-json`** when Make supplies the output path. Do **not** add or rely on duplicate switches for paths or hyperparameter grids that already live in YAML. Optional flags used only for local debugging (e.g. profiling, subset runs) are fine if they stay out of the documented Make workflow.
+- **Examples:** `build_uc_cap_sequence_cache.py` uses **no CLI** (only `defaults.yaml`). `train_hyenadna.py` keeps **`--expt`** (and results-json wiring) for **`EXPT`**; training knobs come from YAML, not argv. Tetramer counting and frequencies are split: **`make tetramer_counts`** then **`make tetramer_frequencies`**, with paths from **`paths.tetramer_counts_dir`** and **`paths.tetramer_frequencies_csv`**.
 
 ## Sample identity and FASTA files
 
@@ -21,7 +27,7 @@ alwaysApply: true
 
 ## Pipeline artifact conventions
 
-- Per-run sequence count files for UC/CAP use **`.csv.xz`** under `outputs/<cancer_type>/<study_name>/<Run>.csv.xz`.
+- Per-run sequence count files for UC/CAP use **`.csv.xz`** under `outputs/tetramer_counts/<cancer_type>/<study_name>/<Run>.csv.xz` (see **`paths.tetramer_counts_dir`** in **`defaults.yaml`**).
 - Scratch experiment JSON outputs are written under **`results/scratch/`** (gitignored); finalized artifacts are manually selected/copied into version-controlled `results/...`.
 
 ## Shared split assignment
@@ -39,3 +45,4 @@ alwaysApply: true
 ## Long-running scripts
 
 - Any script that **iterates over many runs or large FASTAs** should expose **visible progress** (e.g. current study, run index / total, optional ETA or per-study summary); print a **newline** before unrelated output so progress lines do not corrupt the terminal.
+- **Tetramer counting** (`tetramer_counts`) is **CPU-heavy** (4-mer accumulation and **xz** compression of large per-run tables), not only I/O; budget wall time accordingly.

@@ -11,6 +11,8 @@ paths:
   results_dir: results
   # Ephemeral / local experiment outputs (gitignored); finalized copies go under results/
   results_scratch_dir: results/scratch
+  # Per-run sequence-level tetramer counts (scripts/count_tetramers.py).
+  tetramer_counts_dir: outputs/tetramer_counts
   # Run-level tetramer frequency table (input for scripts/fit_classifier.py --tetramer).
   tetramer_frequencies_csv: outputs/tetramer_frequencies.csv
   uc_cap_root: outputs/uc_cap

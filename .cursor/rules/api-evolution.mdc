@@ -11,6 +11,8 @@ While this repo is under active development, **do not** add or keep compatibilit
 
 Update consumers (scripts, helpers, docs) to match the current contract; regenerate artifacts when shapes change.
 
+- Narrowing the **CLI surface** (paths and grids live in **YAML**; Make passes only **`EXPT`**, **`FEAT`**, mode flags, and computed output paths) follows the same rule: update scripts, **`Makefile`**, and README together rather than keeping parallel argv switches “just in case.”
+
 ## Replace, don't accumulate
 
 When new functionality supersedes existing code, **remove the old code**. The default agent instinct is to add alongside existing infrastructure; resist this. Leaving old functions in place because they might be needed later creates the exact fragmentation that makes the codebase hard to understand.
@@ -45,7 +47,7 @@ The cost of one ignored column is negligible. The cost of two divergent implemen
 
 ## Feature data versus metadata
 
-In this project, **feature files** (`tetramer_frequencies.csv`, UC/CAP CSVs, torch tensor caches) carry **Run identifiers and feature columns only**. Labels and splits are always derived from study CSVs via `scripts/shared_utilities.py`.
+In this project, **feature files** (`tetramer_frequencies.csv`, per-run sequence counts under **`paths.tetramer_counts_dir`**, UC/CAP CSVs, torch tensor caches) carry **Run identifiers and feature columns only**. Labels and splits are always derived from study CSVs via `scripts/shared_utilities.py`.
 
 Consuming scripts follow this pattern:
 1. Call `build_run_task_table(task)` to get the canonical metadata table.

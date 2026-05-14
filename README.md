@@ -47,7 +47,7 @@ See the list for a quick overview of the steps and read below for details.
 
 1. Installation: `pip install -r requirements.txt` installs dependencies including the local `hyenadna` package in editable mode.
 2. Download data: `make download_data` downloads 16S sequences from SRA (about 9 GB on disk).
-3. Tetramer counts: `make tetramer_frequencies` counts tetramers in sequences and gets run-level means (several hours / about 5 GB on disk).
+3. Tetramer pipeline: `make tetramer_counts` then `make tetramer_frequencies` (sequence-level counting is CPU-heavy; run-level percentages go to `outputs/tetramer_frequencies.csv`).
 4. Tetramer classifier: `make -j4 fit_tetramer EXPT=0` generates results files in `results/tetramer` (about 6 min).
 5. Sequence cache: `make sequence_cache` generates a Parquet file with tetramer counts for the first 10000 sequences in each run.
 6. UC/CAP pipeline: `make run_uc_cap FEAT=0` generates cluster abundance profiles in `outputs/uc_cap` (about 40 min / 100GB RAM).
@@ -83,16 +83,11 @@ Split proportions are configured in `defaults.yaml (currently 0.70/0.15/0.15 for
 
 `make download_data` reads study metadata files in `data/**/*.csv` and outputs FASTA files to `fasta/<study>/<Run>.fasta.gz`.
 
-### Tetramer frequencies
+### Tetramer counts and frequencies
 
-`make tetramer_frequencies` builds tetramer (4-mer) profiles from the downloaded FASTA files.
-The script only processes rows with `sample_used=TRUE` in the CSV files under `data/`.
-It writes two outputs with 256 feature columns in the same lexicographic ACGT 4-mer order:
+`make tetramer_counts` reads `data/**/*.csv` (rows with `sample_used=TRUE`) and FASTA files under `fasta/<study>/<Run>.fasta.gz`, then writes missing per-sequence count tables under **`outputs/tetramer_counts/<cancer>/<study>/<Run>.csv.xz`** (256 integer columns per row, no header).
 
-1. `outputs/tetramer_frequencies.csv` is used by the run-level tetramer classifer.
-It has one row per run with `Run` plus 256 columns of **percentage** 4-mer frequencies (counts summed over every sequence in that run's FASTA, then scaled to 100%).
-2. The per-run files `outputs/<cancer_type>/<study_name>/<Run>.csv.xz` are used by the UC/CAP classifier.
-They hold 256 columns of **raw integer** 4-mer counts with no header row, one row per FASTA sequence in encounter order.
+`make tetramer_frequencies` reads those count files, sums each run to a single profile, and appends new rows to **`outputs/tetramer_frequencies.csv`** (`Run` plus 256 **percentage** columns in lexicographic ACGT tetramer order). Run **`tetramer_counts` first** so count files exist.
 
 ### Run-level tetramer classifier
 
@@ -111,7 +106,7 @@ Output files:
 This stage takes the per-run tetramer count files and generates feature sets (cluster abundance profiles) used for classification.
 
 - `make sequence_cache` builds a cached sequence-level tetramer table for UC/CAP exploration.
-  It reads per-run tetramer counts from `outputs/<cancer>/<study>/<Run>.csv.xz`, kaeeps the first 10000 rows (configured in `defaults.yaml`) from each run,
+  It reads per-run tetramer counts from **`outputs/tetramer_counts/<cancer>/<study>/<Run>.csv.xz`**, keeps the first 10000 rows (configured in `defaults.yaml`) from each run,
   and saves the result in a Parquet table at `outputs/uc_cap/sequence_counts_first_10000_all_runs.parquet`.
 - `make run_uc_cap` without arguments builds a CSV at `outputs/uc_cap/uc{n}_k{k}/cap{n}.csv` with defaults from `defaults.yaml`.
   With `FEAT=N` / `FEAT=0`, it drives the same pipeline to generate one or all feature sets using parameters from `run_uc_cap_pipeline` in `experiments.yaml` .

@@ -2,7 +2,8 @@
 """
 Build a cached sequence-level tetramer table for UC/CAP exploration.
 
-Reads per-run sequence tetramer count files from outputs/<cancer_type>/<study_name>/.
+Reads per-run sequence tetramer count files from paths.tetramer_counts_dir
+(outputs/tetramer_counts/<cancer_type>/<study_name>/ by default).
 Each input file must contain 256 integer columns (no header) with one row per sequence.
 Compressed .csv.xz files are expected.
 
@@ -12,18 +13,18 @@ Writes one Parquet file containing:
   - sequence_index (1-based row index within the source run file)
   - 256 tetramer count columns (AAAA ... TTTT, lexicographic ACGT order)
 
-The script keeps only the first N rows from each run file (provided via --n-max).
+Row limit and output path come from defaults.yaml (sequence_cache.n_max_per_run and
+paths.uc_cap_root); compression from sequence_cache.parquet_compression.
 """
 
 from __future__ import annotations
 
-import argparse
 import itertools
 import re
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Tuple
 
 import pandas as pd
 import yaml
@@ -35,10 +36,14 @@ TETRAMERS: Tuple[str, ...] = tuple(
     "".join(p) for p in itertools.product("ACGT", repeat=4)
 )
 
+_PARQUET_COMPRESSIONS = frozenset(
+    ("zstd", "snappy", "gzip", "brotli", "lz4", "none")
+)
 
-def iter_run_files(outputs_dir: Path) -> Iterable[Tuple[str, str, Path]]:
+
+def iter_run_files(counts_root: Path) -> Iterable[Tuple[str, str, Path]]:
     """Yield (study_name, run_accession, file_path) for run-level sequence count files."""
-    for path in sorted(outputs_dir.rglob(f"*{INPUT_SUFFIX}")):
+    for path in sorted(counts_root.rglob(f"*{INPUT_SUFFIX}")):
         if path.name.startswith("."):
             continue
         run = path.name[: -len(INPUT_SUFFIX)]
@@ -50,79 +55,55 @@ def iter_run_files(outputs_dir: Path) -> Iterable[Tuple[str, str, Path]]:
         yield study_name, run, path
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
-    default_config_path = repo_root / "defaults.yaml"
-    bootstrap = argparse.ArgumentParser(add_help=False)
-    bootstrap.add_argument("--config", type=Path, default=default_config_path)
-    bootstrap_args, _ = bootstrap.parse_known_args(list(argv) if argv is not None else None)
-    config_path = bootstrap_args.config
+    cfg_path = repo_root / "defaults.yaml"
     try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        default_n_max = int(cfg["sequence_cache"]["n_max_per_run"])
-        default_outputs_dir = repo_root / str(cfg["paths"]["outputs_dir"]).strip()
-        default_uc_cap_root = repo_root / str(cfg["paths"]["uc_cap_root"]).strip()
-        default_compression = str(cfg["sequence_cache"]["parquet_compression"]).strip()
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+        n_max = int(cfg["sequence_cache"]["n_max_per_run"])
+        compression_raw = str(cfg["sequence_cache"]["parquet_compression"]).strip()
+        paths = cfg["paths"]
+
+        def _resolve(key: str) -> Path:
+            p = Path(str(paths[key]).strip())
+            return p if p.is_absolute() else repo_root / p
+
+        counts_dir = _resolve("tetramer_counts_dir")
+        uc_cap_root = _resolve("uc_cap_root")
     except (OSError, KeyError, TypeError, ValueError) as exc:
-        raise SystemExit(f"Invalid pipeline config defaults in {config_path}: {exc}") from exc
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=config_path,
-        help="Path to defaults.yaml (default: <repo>/defaults.yaml).",
-    )
-    parser.add_argument(
-        "--outputs-dir",
-        type=Path,
-        default=default_outputs_dir,
-        help="Root directory containing per-run sequence count files (default: from pipeline config).",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=None,
-        help="Output Parquet path (default: derived from --n-max under configured uc_cap_root).",
-    )
-    parser.add_argument(
-        "--n-max",
-        type=int,
-        default=default_n_max,
-        help="Maximum number of sequences to keep per Run (default: from pipeline config).",
-    )
-    parser.add_argument(
-        "--compression",
-        type=str,
-        default=default_compression,
-        choices=("zstd", "snappy", "gzip", "brotli", "lz4", "none"),
-        help="Parquet compression codec (default: from pipeline config).",
-    )
-    args = parser.parse_args(list(argv) if argv is not None else None)
-    if args.output is None:
-        args.output = default_uc_cap_root / f"sequence_counts_first_{args.n_max}_all_runs.parquet"
-    return args
-
-
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = parse_args(argv)
-    if args.n_max <= 0:
-        print("--n-max must be a positive integer", file=sys.stderr)
+        print(f"Invalid pipeline config in {cfg_path}: {exc}", file=sys.stderr)
         return 1
 
-    outputs_dir = args.outputs_dir
-    output_path = args.output
-    parquet_compression = None if args.compression == "none" else args.compression
-
-    if not outputs_dir.is_dir():
-        print(f"Error: outputs directory not found: {outputs_dir}", file=sys.stderr)
+    if compression_raw not in _PARQUET_COMPRESSIONS:
+        print(
+            f"Invalid sequence_cache.parquet_compression in {cfg_path}: "
+            f"{compression_raw!r} (expected one of {sorted(_PARQUET_COMPRESSIONS)})",
+            file=sys.stderr,
+        )
         return 1
 
-    run_files = list(iter_run_files(outputs_dir=outputs_dir))
+    if n_max <= 0:
+        print(
+            "sequence_cache.n_max_per_run must be a positive integer",
+            file=sys.stderr,
+        )
+        return 1
+
+    output_path = uc_cap_root / f"sequence_counts_first_{n_max}_all_runs.parquet"
+    parquet_compression = None if compression_raw == "none" else compression_raw
+
+    if not counts_dir.is_dir():
+        print(
+            f"Error: tetramer counts directory not found: {counts_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    run_files = list(iter_run_files(counts_root=counts_dir))
     if not run_files:
         print(
             (
-                f"Error: no run files found in {outputs_dir} with suffix "
+                f"Error: no run files found in {counts_dir} with suffix "
                 f"'{INPUT_SUFFIX}'"
             ),
             file=sys.stderr,
@@ -140,7 +121,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     n_rows_total = 0
     n_skipped_empty = 0
     print(
-        f"Building UC/CAP cache from {n_runs} run files; taking first {args.n_max} rows/run.",
+        f"Building UC/CAP cache from {n_runs} run files; taking first {n_max} rows/run.",
         flush=True,
     )
 
@@ -152,7 +133,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             df = pd.read_csv(
                 path,
                 header=None,
-                nrows=args.n_max,
+                nrows=n_max,
                 dtype="int64",
                 compression="infer",
             )

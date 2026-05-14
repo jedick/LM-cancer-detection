@@ -55,7 +55,7 @@ DATA_CSVS := $(shell find $(ROOT)/$(DATA_DIR) -type f -name '*.csv' 2>/dev/null)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help download_data tetramer_frequencies sequence_cache fit_tetramer fit_uc_cap run_uc_cap \
+.PHONY: help download_data tetramer_counts tetramer_frequencies sequence_cache fit_tetramer fit_uc_cap run_uc_cap \
 	train_hyenadna audit_run_tensors extract_embeddings extract_embeddings_baseline \
 	fit_embeddings explain explain-%
 
@@ -65,12 +65,15 @@ help:
 	@echo "  make download_data"
 	@echo "      Run scripts/download_sra_data.py."
 	@echo ""
+	@echo "  make tetramer_counts"
+	@echo "      Count 4-mers per FASTA sequence; write missing"
+	@echo "      outputs/tetramer_counts/<cancer>/<study>/<Run>.csv.xz (compute-heavy)."
+	@echo "      FASTA inputs are not prerequisites (avoids huge dep lists)."
+	@echo ""
 	@echo "  make tetramer_frequencies"
-	@echo "      Append missing Run rows to tetramer frequencies CSV and"
-	@echo "      create missing per-run sequence count files under outputs/."
-	@echo "      (depends on data CSVs). Existing rows/files are left unchanged."
-	@echo "      FASTA inputs are not listed as prerequisites"
-	@echo "      (avoids huge dep lists); delete the CSV output to force a rebuild."
+	@echo "      Append missing Run rows to tetramer frequencies CSV from count files"
+	@echo "      (depends on data CSVs). Run tetramer_counts first so count files exist."
+	@echo "      Delete the frequencies CSV to force a full rebuild of that artifact."
 	@echo ""
 	@echo "  make sequence_cache"
 	@echo "      Build $(SEQ_CACHE) via build_uc_cap_sequence_cache.py."
@@ -121,15 +124,18 @@ help:
 	@echo "                make explain-sequence_cache"
 	@echo ""
 
-$(TETRA_CSV): $(DATA_CSVS) $(ROOT)/scripts/calculate_tetramer_frequencies.py
+tetramer_counts: $(DATA_CSVS) $(ROOT)/scripts/count_tetramers.py
+	cd "$(ROOT)" && $(PYTHON) scripts/count_tetramers.py
+
+$(TETRA_CSV): $(DATA_CSVS) $(ROOT)/scripts/calculate_tetramer_frequencies.py $(ROOT)/defaults.yaml
 	@mkdir -p "$(dir $(TETRA_CSV))"
 	cd "$(ROOT)" && $(PYTHON) scripts/calculate_tetramer_frequencies.py
 
 tetramer_frequencies: $(TETRA_CSV)
 	@echo "Up to date: $(TETRA_CSV)"
 
-$(SEQ_CACHE): $(TETRA_CSV) $(ROOT)/scripts/build_uc_cap_sequence_cache.py
-	cd "$(ROOT)" && $(PYTHON) scripts/build_uc_cap_sequence_cache.py --output "$(SEQ_CACHE)"
+$(SEQ_CACHE): $(TETRA_CSV) $(ROOT)/scripts/build_uc_cap_sequence_cache.py $(ROOT)/defaults.yaml
+	cd "$(ROOT)" && $(PYTHON) scripts/build_uc_cap_sequence_cache.py
 
 sequence_cache: $(SEQ_CACHE)
 	@echo "Up to date: $(SEQ_CACHE)"
