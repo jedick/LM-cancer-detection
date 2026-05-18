@@ -51,7 +51,6 @@ ABLATION_DESCRIPTIONS: Dict[str, str] = {
     "hidden_256": "MLP hidden layer width 256 (instead of 512)",
     "unfrozen_backbone": "Unfrozen backbone (lr 2e-4)",
     "unfrozen_backbone_low_lr": "Unfrozen backbone (lr 1e-5)",
-    "study_adv": "Domain adversarial training (study head GRL weight 0.2)",
     #"no_dropout": "No dropout in classification heads",
     #"hidden_64": "MLP with 64-width hidden layer",
     #"low_lr": "Low learning rate (1e-5 instead of 2e-4)",

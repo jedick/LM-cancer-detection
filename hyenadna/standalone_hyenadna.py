@@ -884,27 +884,6 @@ class SequenceDecoder(nn.Module):
         return self.output_transform(x)
 
 
-class _GradientReversalFn(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x: Tensor, lambda_: float) -> Tensor:
-        ctx.lambda_ = float(lambda_)
-        return x
-
-    @staticmethod
-    def backward(ctx, grad_output: Tensor):
-        lam = ctx.lambda_
-        return -lam * grad_output, None
-
-
-class GradientReversal(nn.Module):
-    """Scale reversed gradients from a domain head into shared features (DANN)."""
-
-    def forward(self, x: Tensor, lambda_: float) -> Tensor:
-        if not isinstance(x, Tensor):
-            raise TypeError("GradientReversal expects a torch.Tensor.")
-        return _GradientReversalFn.apply(x, float(lambda_))
-
-
 #@title Model (backbone + head)
 
 """
@@ -948,10 +927,6 @@ class HyenaDNAModel(nn.Module):
                  head_hidden: int = 0,
                  head_dropout: float = 0.0,
                  multitask_class_counts: Optional[Sequence[int]] = None,
-                 use_study_adv: bool = False,
-                 n_study_classes: int = 0,
-                 study_head_hidden: int = 256,
-                 study_head_dropout: float = 0.0,
                  device=None, dtype=None, **kwargs) -> None:
         factory_kwargs = {'device': device, 'dtype': dtype}
         super().__init__()
@@ -961,9 +936,6 @@ class HyenaDNAModel(nn.Module):
         self.use_head = use_head
         mt_counts = list(multitask_class_counts) if multitask_class_counts is not None else []
         self.multitask_mode = bool(use_head) and len(mt_counts) >= 2
-        self.use_study_adv = (
-            bool(use_study_adv) and int(n_study_classes) >= 2 and bool(use_head)
-        )
 
         # check if layer (config) has d_model (HF code differs from main Safari code)
         if 'd_model' not in layer:
@@ -1013,20 +985,6 @@ class HyenaDNAModel(nn.Module):
                     head_dropout=float(head_dropout),
                 )
 
-        self.study_head: Optional[nn.Module] = None
-        self.grad_reverse: Optional[GradientReversal] = None
-        if self.use_study_adv:
-            self.grad_reverse = GradientReversal()
-            sh = max(1, int(study_head_hidden))
-            ns = int(n_study_classes)
-            drop = float(study_head_dropout)
-            self.study_head = nn.Sequential(
-                nn.Linear(d_model, sh),
-                nn.GELU(),
-                nn.Dropout(drop),
-                nn.Linear(sh, ns),
-            )
-
         # Initialize weights and apply final processing
         self.apply(partial(_init_weights, n_layer=n_layer,
                            **(initializer_cfg if initializer_cfg is not None else {})))
@@ -1046,16 +1004,7 @@ class HyenaDNAModel(nn.Module):
             raise RuntimeError("Single-task forward requires head.")
         return self.head.pooled_representation(hidden_states)
 
-    def forward(
-        self,
-        input_ids,
-        position_ids=None,
-        state=None,
-        *,
-        return_study_logits: bool = False,
-        study_grl_lambda: float = 0.0,
-        study_discriminator_detach: bool = False,
-    ):
+    def forward(self, input_ids, position_ids=None, state=None):
         # state for the repo interface
         hidden_states = self.backbone(input_ids, position_ids=position_ids)
 
@@ -1066,35 +1015,10 @@ class HyenaDNAModel(nn.Module):
         if self.multitask_mode:
             if self.task_heads is None:
                 raise RuntimeError("multitask_mode requires task_heads.")
-            task_logits: Union[torch.Tensor, List[torch.Tensor]] = [
-                head(pooled) for head in self.task_heads
-            ]
-        else:
-            if self.head is None:
-                raise RuntimeError("Single-task forward requires head.")
-            task_logits = self.head.output_transform(pooled)
-
-        if not self.use_study_adv or not return_study_logits or self.study_head is None:
-            return task_logits
-
-        if study_discriminator_detach:
-            z = pooled.detach()
-            study_logits = self.study_head(z)
-        else:
-            if self.grad_reverse is None:
-                raise RuntimeError("grad_reverse missing with use_study_adv.")
-            z = self.grad_reverse(pooled, float(study_grl_lambda))
-            study_logits = self.study_head(z)
-        return task_logits, study_logits
-
-    @torch.no_grad()
-    def eval_study_logits(self, input_ids, position_ids=None):
-        """Study-branch logits without GRL (diagnostics / validation)."""
-        if not self.use_study_adv or self.study_head is None:
-            raise RuntimeError("eval_study_logits requires use_study_adv and study_head.")
-        hidden_states = self.backbone(input_ids, position_ids=position_ids)
-        pooled = self._pooled_representation(hidden_states)
-        return self.study_head(pooled)
+            return [head(pooled) for head in self.task_heads]
+        if self.head is None:
+            raise RuntimeError("Single-task forward requires head.")
+        return self.head.output_transform(pooled)
 
 """# Data pipeline
 

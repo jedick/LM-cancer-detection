@@ -197,17 +197,6 @@ train_hyenadna:
   # SequenceDecoder head mode in hyenadna/standalone_hyenadna.py: last, first, pool, sum.
   head_pooling_mode: pool
 
-  ## Doman adversarial training (DANN) with gradient reversal layer (GRL)
-  # Study adversarial head on pooled backbone features. 0 disables DANN; >0 sets CE loss/GRL scale.
-  study_adv_weight: 0
-  # Adversarial head hidden layers and dropout.
-  study_head_hidden: 256
-  study_head_dropout: 0.0
-  # Epochs 1..N: cancer task loss only (study branch inactive).
-  study_adv_delay_epochs: 1
-  # After delay: train study head on detached backbone features for this many epochs before GRL (0 = skip).
-  study_disc_warmup_epochs: 1
-  
   # Optional metrics JSON path; null disables. Empty string (CLI --results-json) uses
   # results/scratch/train_hyenadna_<task>_<utc>.json. Experiments may set via template.
   results_json: null

@@ -71,8 +71,8 @@ train_hyenadna:
     #   cancer_diagnosis (26 min), cancer_type (13 min), multitask (24 min)
     # - Frozen backbone (batch_size=80 for 15GB GPU memory):
     #   multitask (15 min)
-    # Estimated total time for 7 multitask experiments with 5 seeds:
-    #   5/3 * (5 * 15 + 2 * 24) = 205 min (3.4 hr)
+    # Estimated total time for 6 multitask experiments with 5 seeds:
+    #   5/3 * (4 * 15 + 2 * 24) = 180 min (3 hr)
     - name: best_recipe  # EXPT=1
       overrides:
         random_seed: [0,1,2,3,4]
@@ -99,10 +99,6 @@ train_hyenadna:
         freeze_backbone_epochs: 0
         learning_rate: 1.0e-5
         batch_size: 20
-    - name: study_adv  # EXPT=7
-      overrides:
-        random_seed: [0,1,2,3,4]
-        study_adv_weight: 0.2
     # Increasing max_length experiment grid (ca. 9.5 hr)
     - name: max_length_1024  # EXPT=7 (14 min)
       overrides:

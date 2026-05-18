@@ -41,7 +41,6 @@ class RunRecord:
     label: int
     task_label: str
     study_name: str
-    study_id: int
     n_sets: int
     file: Path
     sample_label: str = ""
@@ -149,7 +148,6 @@ def build_run_records(
     cache_root: Path,
     *,
     requested_num_sets: int,
-    study_name_to_id: Optional[Mapping[str, int]],
     label_col: str,
     label_encoder: LabelEncoder,
     extra_columns: Optional[Sequence[str]] = None,
@@ -183,11 +181,6 @@ def build_run_records(
             continue
 
         study_name = str(row["study_name"]).strip()
-        if study_name_to_id is None:
-            study_id = 0
-        else:
-            study_id = int(study_name_to_id.get(study_name, -1))
-
         primary_label = str(row[label_col]).strip()
         sample_label = str(row.get("sample_label", "")).strip() if multitask else ""
         ct_task_label = ""
@@ -206,7 +199,6 @@ def build_run_records(
                 label=int(label_encoder.transform([primary_label])[0]),
                 task_label=primary_label,
                 study_name=study_name,
-                study_id=study_id,
                 n_sets=min(n_sets, requested_num_sets),
                 file=pt_path,
                 sample_label=sample_label,
@@ -226,13 +218,11 @@ def build_multitask_records(
     cd_encoder: LabelEncoder,
     ct_encoder: LabelEncoder,
     requested_num_sets: int,
-    study_name_to_id: Optional[Mapping[str, int]] = None,
 ) -> Tuple[List[RunRecord], int, Tuple[str, ...]]:
     return build_run_records(
         run_df,
         cache_root,
         requested_num_sets=requested_num_sets,
-        study_name_to_id=study_name_to_id,
         label_col="cd_task_label",
         label_encoder=cd_encoder,
         extra_columns=["sample_label", "ct_task_label"],
@@ -247,13 +237,11 @@ def build_single_task_records(
     *,
     label_encoder: LabelEncoder,
     requested_num_sets: int,
-    study_name_to_id: Optional[Mapping[str, int]] = None,
 ) -> Tuple[List[RunRecord], int, Tuple[str, ...]]:
     return build_run_records(
         run_task_df,
         cache_root,
         requested_num_sets=requested_num_sets,
-        study_name_to_id=study_name_to_id,
         label_col="task_label",
         label_encoder=label_encoder,
     )
@@ -464,10 +452,8 @@ def multitask_training_loss_sum_and_count(
     amp_dtype: torch.dtype,
     ce_weight_cd: Optional[torch.Tensor],
     ce_weight_ct: Optional[torch.Tensor],
-    study_train_kw: Optional[Mapping[str, object]],
     loss_ratio: float,
-    study_ignore_index: int,
-) -> Tuple[torch.Tensor, int, Optional[Dict[str, float]]]:
+) -> Tuple[torch.Tensor, int, None]:
     input_ids = batch["input_ids"].to(device)
     bsz, n_set, seq_len = input_ids.shape
     flat_in = input_ids.view(bsz * n_set, seq_len)
@@ -478,32 +464,10 @@ def multitask_training_loss_sum_and_count(
         raise SystemExit("Multitask batch missing ct_label (internal error).")
     ct_labels_t = ct_labels.to(device)
     mask = torch.arange(n_set, device=device).unsqueeze(0) < nv.to(device).unsqueeze(1)
-    study_ids = batch.get("study_id")
-    if study_ids is None:
-        raise SystemExit("Batch missing study_id (internal error).")
-    study_ids_t = study_ids.to(device)
-
-    phase = (
-        str(study_train_kw.get("phase", "off")).strip().lower()
-        if study_train_kw is not None
-        else "off"
-    )
-    use_study = bool(getattr(model, "use_study_adv", False)) and phase in ("warmup", "dann")
     alpha = float(loss_ratio)
 
     with _amp_autocast(device, amp_enabled=amp_enabled, amp_dtype=amp_dtype):
-        if use_study:
-            assert study_train_kw is not None
-            logits_out, study_logits = model(
-                flat_in,
-                return_study_logits=True,
-                study_grl_lambda=float(study_train_kw.get("study_grl_lambda", 0.0)),
-                study_discriminator_detach=(phase == "warmup"),
-            )
-            study_logits = study_logits.view(bsz, n_set, -1)
-        else:
-            logits_out = model(flat_in)
-            study_logits = None
+        logits_out = model(flat_in)
         if not isinstance(logits_out, (list, tuple)):
             raise SystemExit("Multitask model forward must return a sequence of logits.")
         logits_cd = logits_out[MT_HEAD_CD].view(bsz, n_set, -1)
@@ -543,34 +507,7 @@ def multitask_training_loss_sum_and_count(
 
     mean_cd = cd_ce_sum / float(n_cd)
     combined = alpha * mean_cd + (1.0 - alpha) * mean_ct
-    task_total = combined * float(n_cd)
-
-    if (
-        study_logits is None
-        or phase in ("off", "delay")
-        or not getattr(model, "use_study_adv", False)
-    ):
-        return task_total, n_cd, None
-
-    flat_study_logits = study_logits[mask]
-    flat_study_y = study_ids_t.unsqueeze(1).expand(bsz, n_set)[mask].long()
-    study_ce = F.cross_entropy(
-        flat_study_logits,
-        flat_study_y,
-        ignore_index=study_ignore_index,
-        reduction="sum",
-    )
-    n_study_valid = int((flat_study_y != study_ignore_index).sum().item())
-    if n_study_valid <= 0:
-        return task_total, n_cd, None
-
-    w = float(study_train_kw.get("study_adv_weight", 0.1))
-    scale = float(n_cd) / float(max(n_study_valid, 1))
-    total = task_total + w * study_ce * scale
-    return total, n_cd, {
-        "study_ce_sum": float(study_ce.detach().float().item()),
-        "study_n": float(n_study_valid),
-    }
+    return combined * float(n_cd), n_cd, None
 
 
 def tuning_score_single(f1: float, primary_curve: float, metric: str) -> float:
@@ -992,13 +929,9 @@ def epoch_progress_fields(
     split_eval: SplitHeadScores,
     train_loss: float,
     val_loss: float,
-    study_adv_enabled: bool,
-    val_study_acc: float,
     best_epoch: int,
 ) -> List[str]:
     fields = [f"train_loss={train_loss:.4f}", f"val_loss={val_loss:.4f}"]
-    if study_adv_enabled:
-        fields.append(f"val_study_acc={val_study_acc:.4f}")
     if multitask:
         vcd = split_eval.val[HEAD_CD]
         vct = split_eval.val[HEAD_CT]
